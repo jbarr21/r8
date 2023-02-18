@@ -63,6 +63,7 @@ import java.util.function.Consumer;
  */
 @KeepForApi
 public final class D8Command extends BaseCompilerCommand {
+  private Consumer<InternalOptions> internalOptionsModifier;
 
   private static class DefaultD8DiagnosticsHandler implements DiagnosticsHandler {
 
@@ -96,6 +97,7 @@ public final class D8Command extends BaseCompilerCommand {
     private DesugarGraphConsumer desugarGraphConsumer = null;
     private SyntheticInfoConsumer syntheticInfoConsumer = null;
     private StringConsumer desugaredLibraryKeepRuleConsumer = null;
+    private Consumer<InternalOptions> internalOptionsModifier;
     private String synthesizedClassPrefix = "";
     private boolean enableMainDexListCheck = true;
     private boolean minimalMainDex = false;
@@ -161,6 +163,11 @@ public final class D8Command extends BaseCompilerCommand {
     /** Set input proguard map used for distribution of classes in multi-dex. */
     public Builder setProguardMapInputFile(Path proguardInputMap) {
       getAppBuilder().setProguardMapInputData(proguardInputMap);
+      return self();
+    }
+
+    public Builder setInternalOptionsModifier(Consumer<InternalOptions> f) {
+      this.internalOptionsModifier = f;
       return self();
     }
 
@@ -546,7 +553,8 @@ public final class D8Command extends BaseCompilerCommand {
           getStartupProfileProviders(),
           getClassConflictResolver(),
           getCancelCompilationChecker(),
-          factory);
+          factory,
+          internalOptionsModifier);
     }
   }
 
@@ -565,6 +573,10 @@ public final class D8Command extends BaseCompilerCommand {
   private final boolean enableMissingLibraryApiModeling;
   private final boolean enableRewritingOfArtProfilesIsNopCheck;
   private final DexItemFactory factory;
+
+  public DexItemFactory getDexItemFactory() {
+    return factory;
+  }
 
   public static Builder builder() {
     return new Builder();
@@ -646,7 +658,8 @@ public final class D8Command extends BaseCompilerCommand {
       List<StartupProfileProvider> startupProfileProviders,
       ClassConflictResolver classConflictResolver,
       CancelCompilationChecker cancelCompilationChecker,
-      DexItemFactory factory) {
+      DexItemFactory factory,
+      Consumer<InternalOptions> internalOptionsModifier) {
     super(
         inputApp,
         mode,
@@ -684,6 +697,7 @@ public final class D8Command extends BaseCompilerCommand {
     this.enableMissingLibraryApiModeling = enableMissingLibraryApiModeling;
     this.enableRewritingOfArtProfilesIsNopCheck = enableRewritingOfArtProfilesIsNopCheck;
     this.factory = factory;
+    this.internalOptionsModifier = internalOptionsModifier;
   }
 
   private D8Command(boolean printHelp, boolean printVersion) {
@@ -726,7 +740,7 @@ public final class D8Command extends BaseCompilerCommand {
     internal.enableMainDexListCheck = enableMainDexListCheck;
     internal.setMinApiLevel(AndroidApiLevel.getAndroidApiLevel(getMinApiLevel()));
     internal.intermediate = intermediate;
-    internal.retainCompileTimeAnnotations = intermediate;
+    internal.retainCompileTimeAnnotations = true;
     internal.setGlobalSyntheticsConsumer(globalSyntheticsConsumer);
     internal.setSyntheticInfoConsumer(syntheticInfoConsumer);
     internal.desugarGraphConsumer = desugarGraphConsumer;
@@ -821,6 +835,10 @@ public final class D8Command extends BaseCompilerCommand {
     internal.tool = Tool.D8;
     internal.setDumpInputFlags(getDumpInputFlags());
     internal.dumpOptions = dumpOptions();
+
+    if (internalOptionsModifier != null) {
+      internalOptionsModifier.accept(internal);
+    }
 
     return internal;
   }
