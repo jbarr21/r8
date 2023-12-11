@@ -223,6 +223,14 @@ public class InternalOptions implements GlobalKeepInfoConfiguration {
     return false;
   }
 
+  public boolean hasFeatureSplitConfiguration() {
+    return featureSplitConfiguration != null;
+  }
+
+  public FeatureSplitConfiguration getFeatureSplitConfiguration() {
+    return featureSplitConfiguration;
+  }
+
   public boolean hasProguardConfiguration() {
     return proguardConfiguration != null;
   }
@@ -2411,7 +2419,6 @@ public class InternalOptions implements GlobalKeepInfoConfiguration {
     public boolean enableSwitchToIfRewriting = true;
     public boolean enableEnumUnboxingDebugLogs =
         System.getProperty("com.android.tools.r8.enableEnumUnboxingDebugLogs") != null;
-    public boolean enableEnumWithSubtypesUnboxing = true;
     public boolean enableVerticalClassMergerLensAssertion = false;
     public boolean forceRedundantConstNumberRemoval = false;
     public boolean enableExperimentalDesugaredLibraryKeepRuleGenerator = false;

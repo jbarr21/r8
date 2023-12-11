@@ -12,6 +12,7 @@ import com.android.tools.r8.keepanno.annotations.CheckRemoved;
 import com.android.tools.r8.keepanno.annotations.FieldAccessFlags;
 import com.android.tools.r8.keepanno.annotations.KeepBinding;
 import com.android.tools.r8.keepanno.annotations.KeepCondition;
+import com.android.tools.r8.keepanno.annotations.KeepConstraint;
 import com.android.tools.r8.keepanno.annotations.KeepEdge;
 import com.android.tools.r8.keepanno.annotations.KeepForApi;
 import com.android.tools.r8.keepanno.annotations.KeepItemKind;
@@ -19,9 +20,12 @@ import com.android.tools.r8.keepanno.annotations.KeepOption;
 import com.android.tools.r8.keepanno.annotations.KeepTarget;
 import com.android.tools.r8.keepanno.annotations.MemberAccessFlags;
 import com.android.tools.r8.keepanno.annotations.MethodAccessFlags;
+import com.android.tools.r8.keepanno.annotations.TypePattern;
 import com.android.tools.r8.keepanno.annotations.UsedByNative;
 import com.android.tools.r8.keepanno.annotations.UsedByReflection;
 import com.android.tools.r8.keepanno.annotations.UsesReflection;
+import com.android.tools.r8.utils.StringUtils;
+import com.android.tools.r8.utils.StringUtils.BraceType;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import java.io.ByteArrayOutputStream;
@@ -259,7 +263,7 @@ public class KeepItemAnnotationGenerator {
     }
 
     private static String KIND_GROUP = "kind";
-    private static String OPTIONS_GROUP = "options";
+    private static String CONSTRAINTS_GROUP = "constraints";
     private static String CLASS_GROUP = "class";
     private static String CLASS_NAME_GROUP = "class-name";
     private static String INSTANCE_OF_GROUP = "instance-of";
@@ -330,6 +334,38 @@ public class KeepItemAnnotationGenerator {
                   .defaultEmptyArray("KeepTarget"));
     }
 
+    private Group typePatternGroup() {
+      return new Group("type-pattern")
+          .addMember(
+              new GroupMember("name")
+                  .setDocTitle("Exact type name as a string.")
+                  .addParagraph("For example, {@code \"long\"} or {@code \"java.lang.String\"}.")
+                  .defaultEmptyString())
+          .addMember(
+              new GroupMember("constant")
+                  .setDocTitle("Exact type from a class constant.")
+                  .addParagraph("For example, {@code String.class}.")
+                  .defaultObjectClass());
+      // TODO(b/248408342): Add more injections on type pattern variants.
+      // /** Exact type name as a string to match any array with that type as member. */
+      // String arrayOf() default "";
+      //
+      // /** Exact type as a class constant to match any array with that type as member. */
+      // Class<?> arrayOfConstant() default TypePattern.class;
+      //
+      // /** If true, the pattern matches any primitive type. Such as, boolean, int, etc. */
+      // boolean anyPrimitive() default false;
+      //
+      // /** If true, the pattern matches any array type. */
+      // boolean anyArray() default false;
+      //
+      // /** If true, the pattern matches any class type. */
+      // boolean anyClass() default false;
+      //
+      // /** If true, the pattern matches any reference type, namely: arrays or classes. */
+      // boolean anyReference() default false;
+    }
+
     private Group getKindGroup() {
       return new Group(KIND_GROUP).addMember(getKindMember());
     }
@@ -342,39 +378,76 @@ public class KeepItemAnnotationGenerator {
           .setDocReturn("The kind for this pattern.")
           .addParagraph("Possible values are:")
           .addUnorderedList(
-              KeepItemKind.ONLY_CLASS.name(),
-              KeepItemKind.ONLY_MEMBERS.name(),
-              KeepItemKind.CLASS_AND_MEMBERS.name())
+              docLink(KeepItemKind.ONLY_CLASS),
+              docLink(KeepItemKind.ONLY_MEMBERS),
+              docLink(KeepItemKind.ONLY_METHODS),
+              docLink(KeepItemKind.ONLY_FIELDS),
+              docLink(KeepItemKind.CLASS_AND_MEMBERS),
+              docLink(KeepItemKind.CLASS_AND_METHODS),
+              docLink(KeepItemKind.CLASS_AND_FIELDS))
           .addParagraph(
-              "If unspecified the default for an item with no member patterns is",
-              KeepItemKind.ONLY_CLASS.name(),
-              "and if it does have member patterns the default is",
-              KeepItemKind.ONLY_MEMBERS.name());
+              "If unspecified the default kind for an item depends on its member patterns:")
+          .addUnorderedList(
+              docLink(KeepItemKind.ONLY_CLASS) + " if no member patterns are defined",
+              docLink(KeepItemKind.ONLY_METHODS) + " if method patterns are defined",
+              docLink(KeepItemKind.ONLY_FIELDS) + " if field patterns are defined",
+              docLink(KeepItemKind.ONLY_MEMBERS) + " otherwise.");
     }
 
-    private Group getKeepOptionsGroup() {
-      return new Group(OPTIONS_GROUP)
+    private Group getKeepConstraintsGroup() {
+      return new Group(CONSTRAINTS_GROUP)
+          .addMember(constraints())
           .addMember(
               new GroupMember("allow")
-                  .setDocTitle("Define the " + OPTIONS_GROUP + " that are allowed to be modified.")
-                  .addParagraph("The specified options do not need to be preserved for the target.")
-                  .setDocReturn("Options allowed to be modified for the target.")
+                  .setDeprecated("Use " + docLink(constraints()) + " instead.")
+                  .setDocTitle(
+                      "Define the " + CONSTRAINTS_GROUP + " that are allowed to be modified.")
+                  .addParagraph(
+                      "The specified option constraints do not need to be preserved for the"
+                          + " target.")
+                  .setDocReturn("Option constraints allowed to be modified for the target.")
                   .defaultEmptyArray("KeepOption"))
           .addMember(
               new GroupMember("disallow")
+                  .setDeprecated("Use " + docLink(constraints()) + " instead.")
                   .setDocTitle(
-                      "Define the " + OPTIONS_GROUP + " that are not allowed to be modified.")
-                  .addParagraph("The specified options *must* be preserved for the target.")
-                  .setDocReturn("Options not allowed to be modified for the target.")
+                      "Define the " + CONSTRAINTS_GROUP + " that are not allowed to be modified.")
+                  .addParagraph(
+                      "The specified option constraints *must* be preserved for the target.")
+                  .setDocReturn("Option constraints not allowed to be modified for the target.")
                   .defaultEmptyArray("KeepOption"))
           .addDocFooterParagraph(
               "If nothing is specified for "
-                  + OPTIONS_GROUP
-                  + " the default is "
-                  + quote("allow none")
-                  + " / "
-                  + quote("disallow all")
+                  + CONSTRAINTS_GROUP
+                  + " the default is the default for "
+                  + docLink(constraints())
                   + ".");
+    }
+
+    private static String docLinkList(Enum<?>... values) {
+      return StringUtils.join(", ", values, v -> docLink(v), BraceType.TUBORG);
+    }
+
+    private static GroupMember constraints() {
+      return new GroupMember("constraints")
+          .setDocTitle("Define the usage constraints of the target.")
+          .addParagraph("The specified constraints must remain valid for the target.")
+          .addParagraph("The default constraints depend on the type of the target.")
+          .addUnorderedList(
+              "For classes, the default is "
+                  + docLinkList(
+                      KeepConstraint.LOOKUP, KeepConstraint.NAME, KeepConstraint.CLASS_INSTANTIATE),
+              "For methods, the default is "
+                  + docLinkList(
+                      KeepConstraint.LOOKUP, KeepConstraint.NAME, KeepConstraint.METHOD_INVOKE),
+              "For fields, the default is "
+                  + docLinkList(
+                      KeepConstraint.LOOKUP,
+                      KeepConstraint.NAME,
+                      KeepConstraint.FIELD_GET,
+                      KeepConstraint.FIELD_SET))
+          .setDocReturn("Usage constraints for the target.")
+          .defaultEmptyArray(KeepConstraint.class);
     }
 
     private GroupMember bindingName() {
@@ -585,7 +658,22 @@ public class KeepItemAnnotationGenerator {
                   .addParagraph(getMutuallyExclusiveForMethodProperties())
                   .addParagraph(getMethodDefaultDoc("any return type"))
                   .setDocReturn("The qualified type name of the method return type.")
-                  .defaultEmptyString());
+                  .defaultEmptyString())
+          .addMember(
+              new GroupMember("methodReturnTypeConstant")
+                  .setDocTitle("Define the method return-type pattern by a class constant.")
+                  .addParagraph(getMutuallyExclusiveForMethodProperties())
+                  .addParagraph(getMethodDefaultDoc("any return type"))
+                  .setDocReturn("A class constant denoting the type of the method return type.")
+                  .defaultObjectClass())
+          .addMember(
+              new GroupMember("methodReturnTypePattern")
+                  .setDocTitle("Define the method return-type pattern by a type pattern.")
+                  .addParagraph(getMutuallyExclusiveForMethodProperties())
+                  .addParagraph(getMethodDefaultDoc("any return type"))
+                  .setDocReturn("The pattern of the method return type.")
+                  .defaultType("TypePattern")
+                  .defaultValue("@TypePattern(name = \"\")"));
     }
 
     private Group createMethodParametersGroup() {
@@ -598,7 +686,16 @@ public class KeepItemAnnotationGenerator {
                   .addParagraph(getMethodDefaultDoc("any parameters"))
                   .setDocReturn("The list of qualified type names of the method parameters.")
                   .defaultType("String[]")
-                  .defaultValue("{\"<default>\"}"));
+                  .defaultValue("{\"\"}"))
+          .addMember(
+              new GroupMember("methodParameterTypePatterns")
+                  .setDocTitle(
+                      "Define the method parameters pattern by a list of patterns on types.")
+                  .addParagraph(getMutuallyExclusiveForMethodProperties())
+                  .addParagraph(getMethodDefaultDoc("any parameters"))
+                  .setDocReturn("The list of type patterns for the method parameters.")
+                  .defaultType("TypePattern[]")
+                  .defaultValue("{@TypePattern(name = \"\")}"));
     }
 
     private Group createFieldAccessGroup() {
@@ -630,8 +727,23 @@ public class KeepItemAnnotationGenerator {
                   .setDocTitle("Define the field-type pattern by a fully qualified type.")
                   .addParagraph(getMutuallyExclusiveForFieldProperties())
                   .addParagraph(getFieldDefaultDoc("any type"))
-                  .setDocReturn("The qualified type name of the field type.")
-                  .defaultEmptyString());
+                  .setDocReturn("The qualified type name for the field type.")
+                  .defaultEmptyString())
+          .addMember(
+              new GroupMember("fieldTypeConstant")
+                  .setDocTitle("Define the field-type pattern by a class constant.")
+                  .addParagraph(getMutuallyExclusiveForFieldProperties())
+                  .addParagraph(getFieldDefaultDoc("any type"))
+                  .setDocReturn("The class constant for the field type.")
+                  .defaultObjectClass())
+          .addMember(
+              new GroupMember("fieldTypePattern")
+                  .setDocTitle("Define the field-type pattern by a pattern on types.")
+                  .addParagraph(getMutuallyExclusiveForFieldProperties())
+                  .addParagraph(getFieldDefaultDoc("any type"))
+                  .setDocReturn("The type pattern for the field type.")
+                  .defaultType("TypePattern")
+                  .defaultValue("@TypePattern(name = \"\")"));
     }
 
     private void generateClassAndMemberPropertiesWithClassAndMemberBinding() {
@@ -691,6 +803,24 @@ public class KeepItemAnnotationGenerator {
       createFieldTypeGroup().generate(this);
     }
 
+    private void generateTypePattern() {
+      printCopyRight(2023);
+      printPackage("annotations");
+      printImports(ANNOTATION_IMPORTS);
+      DocPrinter.printer()
+          .setDocTitle("A pattern structure for matching types.")
+          .addParagraph("If no properties are set, the default pattern matches any type.")
+          .addParagraph("All properties on this annotation are mutually exclusive.")
+          .printDoc(this::println);
+      println("@Target(ElementType.ANNOTATION_TYPE)");
+      println("@Retention(RetentionPolicy.CLASS)");
+      println("public @interface TypePattern {");
+      println();
+      withIndent(() -> typePatternGroup().generate(this));
+      println();
+      println("}");
+    }
+
     private void generateKeepBinding() {
       printCopyRight(2022);
       printPackage("annotations");
@@ -740,7 +870,7 @@ public class KeepItemAnnotationGenerator {
           () -> {
             getKindGroup().generate(this);
             println();
-            getKeepOptionsGroup().generate(this);
+            getKeepConstraintsGroup().generate(this);
             println();
             generateClassAndMemberPropertiesWithClassAndMemberBinding();
           });
@@ -942,20 +1072,26 @@ public class KeepItemAnnotationGenerator {
             GroupMember kindProperty = getKindMember();
             kindProperty
                 .clearDocLines()
+                .addParagraph("If unspecified the default kind depends on the annotated item.")
+                .addParagraph("When annotating a class the default kind is:")
+                .addUnorderedList(
+                    docLink(KeepItemKind.ONLY_CLASS) + " if no member patterns are defined;",
+                    docLink(KeepItemKind.CLASS_AND_METHODS) + " if method patterns are defined;",
+                    docLink(KeepItemKind.CLASS_AND_FIELDS) + " if field patterns are defined;",
+                    docLink(KeepItemKind.CLASS_AND_MEMBERS) + "otherwise.")
                 .addParagraph(
-                    "When annotating a class without member patterns, the default kind is "
+                    "When annotating a method the default kind is: "
+                        + docLink(KeepItemKind.ONLY_METHODS))
+                .addParagraph(
+                    "When annotating a field the default kind is: "
+                        + docLink(KeepItemKind.ONLY_FIELDS))
+                .addParagraph(
+                    "It is not possible to use "
                         + docLink(KeepItemKind.ONLY_CLASS)
-                        + ".")
-                .addParagraph(
-                    "When annotating a class with member patterns, the default kind is "
-                        + docLink(KeepItemKind.CLASS_AND_MEMBERS)
-                        + ".")
-                .addParagraph(
-                    "When annotating a member, the default kind is "
-                        + docLink(KeepItemKind.ONLY_MEMBERS)
-                        + ".")
-                .addParagraph("It is not possible to use ONLY_CLASS if annotating a member.")
+                        + " if annotating a member.")
                 .generate(this);
+            println();
+            constraints().generate(this);
             println();
             generateMemberPropertiesNoBinding();
           });
@@ -963,20 +1099,20 @@ public class KeepItemAnnotationGenerator {
       println("}");
     }
 
-    private String annoSimpleName(Class<?> clazz) {
+    private static String annoSimpleName(Class<?> clazz) {
       return "@" + simpleName(clazz);
     }
 
-    private String docLink(Class<?> clazz) {
+    private static String docLink(Class<?> clazz) {
       return "{@link " + simpleName(clazz) + "}";
     }
 
-    private String docLink(GroupMember member) {
+    private static String docLink(GroupMember member) {
       return "{@link #" + member.name + "}";
     }
 
-    private String docLink(KeepItemKind kind) {
-      return "{@link KeepItemKind#" + kind.name() + "}";
+    private static String docLink(Enum<?> kind) {
+      return "{@link " + simpleName(kind.getClass()) + "#" + kind.name() + "}";
     }
 
     private void generateConstants() {
@@ -1008,10 +1144,13 @@ public class KeepItemAnnotationGenerator {
             generateConditionConstants();
             generateTargetConstants();
             generateKindConstants();
+            generateConstraintConstants();
             generateOptionConstants();
             generateMemberAccessConstants();
             generateMethodAccessConstants();
             generateFieldAccessConstants();
+
+            generateTypePatternConstants();
           });
       println("}");
     }
@@ -1163,7 +1302,7 @@ public class KeepItemAnnotationGenerator {
           () -> {
             generateAnnotationConstants(KeepTarget.class);
             getKindGroup().generateConstants(this);
-            getKeepOptionsGroup().generateConstants(this);
+            getKeepConstraintsGroup().generateConstants(this);
           });
       println("}");
       println();
@@ -1183,6 +1322,20 @@ public class KeepItemAnnotationGenerator {
                         + quote(value.name())
                         + ";");
               }
+            }
+          });
+      println("}");
+      println();
+    }
+
+    private void generateConstraintConstants() {
+      println("public static final class Constraints {");
+      withIndent(
+          () -> {
+            generateAnnotationConstants(KeepConstraint.class);
+            for (KeepConstraint value : KeepConstraint.values()) {
+              println(
+                  "public static final String " + value.name() + " = " + quote(value.name()) + ";");
             }
           });
       println("}");
@@ -1267,6 +1420,17 @@ public class KeepItemAnnotationGenerator {
       println();
     }
 
+    private void generateTypePatternConstants() {
+      println("public static final class TypePattern {");
+      withIndent(
+          () -> {
+            generateAnnotationConstants(TypePattern.class);
+            typePatternGroup().generateConstants(this);
+          });
+      println("}");
+      println();
+    }
+
     private static void writeFile(Path file, Consumer<Generator> fn) throws IOException {
       ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
       PrintStream printStream = new PrintStream(byteStream);
@@ -1288,6 +1452,7 @@ public class KeepItemAnnotationGenerator {
       writeFile(astPkg.resolve("AnnotationConstants.java"), Generator::generateConstants);
 
       Path annoPkg = Paths.get("src/keepanno/java/com/android/tools/r8/keepanno/annotations");
+      writeFile(annoPkg.resolve("TypePattern.java"), Generator::generateTypePattern);
       writeFile(annoPkg.resolve("KeepBinding.java"), Generator::generateKeepBinding);
       writeFile(annoPkg.resolve("KeepTarget.java"), Generator::generateKeepTarget);
       writeFile(annoPkg.resolve("KeepCondition.java"), Generator::generateKeepCondition);

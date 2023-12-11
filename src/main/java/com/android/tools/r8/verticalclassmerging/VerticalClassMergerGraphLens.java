@@ -4,32 +4,39 @@
 
 package com.android.tools.r8.verticalclassmerging;
 
+import static com.android.tools.r8.utils.MapUtils.ignoreKey;
+
+import com.android.tools.r8.classmerging.ClassMergerGraphLens;
 import com.android.tools.r8.graph.AppView;
+import com.android.tools.r8.graph.DexEncodedField;
+import com.android.tools.r8.graph.DexEncodedMethod;
 import com.android.tools.r8.graph.DexField;
-import com.android.tools.r8.graph.DexItemFactory;
 import com.android.tools.r8.graph.DexMethod;
 import com.android.tools.r8.graph.DexProgramClass;
-import com.android.tools.r8.graph.DexProto;
 import com.android.tools.r8.graph.DexType;
 import com.android.tools.r8.graph.lens.GraphLens;
 import com.android.tools.r8.graph.lens.MethodLookupResult;
-import com.android.tools.r8.graph.lens.NestedGraphLens;
 import com.android.tools.r8.graph.proto.ArgumentInfoCollection;
 import com.android.tools.r8.graph.proto.RewrittenPrototypeDescription;
 import com.android.tools.r8.ir.code.InvokeType;
+import com.android.tools.r8.ir.conversion.ExtraParameter;
+import com.android.tools.r8.ir.conversion.ExtraUnusedNullParameter;
 import com.android.tools.r8.utils.IterableUtils;
 import com.android.tools.r8.utils.collections.BidirectionalManyToOneRepresentativeHashMap;
 import com.android.tools.r8.utils.collections.BidirectionalManyToOneRepresentativeMap;
 import com.android.tools.r8.utils.collections.BidirectionalOneToOneHashMap;
+import com.android.tools.r8.utils.collections.BidirectionalOneToOneMap;
 import com.android.tools.r8.utils.collections.MutableBidirectionalManyToOneRepresentativeMap;
 import com.android.tools.r8.utils.collections.MutableBidirectionalOneToOneMap;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
 
 // This graph lens is instantiated during vertical class merging. The graph lens is context
@@ -56,40 +63,43 @@ import java.util.Set;
 // invocation will hit the same implementation as the original super.m() call.
 //
 // For the invocation "invoke-virtual A.m()" in B.m2, this graph lens will return the method B.m.
-public class VerticalClassMergerGraphLens extends NestedGraphLens {
+public class VerticalClassMergerGraphLens extends ClassMergerGraphLens {
 
-  interface GraphLensLookupResultProvider {
+  private final VerticallyMergedClasses mergedClasses;
+  private final Map<DexType, Map<DexMethod, DexMethod>> contextualSuperToImplementationInContexts;
+  private final BidirectionalOneToOneMap<DexMethod, DexMethod> extraNewMethodSignatures;
 
-    MethodLookupResult get(RewrittenPrototypeDescription prototypeChanges);
-  }
-
-  private final AppView<?> appView;
-
-  private VerticallyMergedClasses mergedClasses;
-  private final Map<DexType, Map<DexMethod, GraphLensLookupResultProvider>>
-      contextualVirtualToDirectMethodMaps;
-  private Set<DexMethod> mergedMethods;
-  private final Map<DexMethod, DexMethod> originalMethodSignaturesForBridges;
-  private final Map<DexMethod, RewrittenPrototypeDescription> prototypeChanges;
+  private final Set<DexMethod> mergedMethods;
+  private final Set<DexMethod> staticizedMethods;
 
   private VerticalClassMergerGraphLens(
       AppView<?> appView,
       VerticallyMergedClasses mergedClasses,
       BidirectionalManyToOneRepresentativeMap<DexField, DexField> fieldMap,
-      Map<DexMethod, DexMethod> methodMap,
-      Set<DexMethod> mergedMethods,
-      Map<DexType, Map<DexMethod, GraphLensLookupResultProvider>>
-          contextualVirtualToDirectMethodMaps,
+      Map<DexType, Map<DexMethod, DexMethod>> contextualSuperToImplementationInContexts,
       BidirectionalManyToOneRepresentativeMap<DexMethod, DexMethod> newMethodSignatures,
-      Map<DexMethod, DexMethod> originalMethodSignaturesForBridges,
-      Map<DexMethod, RewrittenPrototypeDescription> prototypeChanges) {
-    super(appView, fieldMap, methodMap, mergedClasses.getBidirectionalMap(), newMethodSignatures);
-    this.appView = appView;
+      BidirectionalOneToOneMap<DexMethod, DexMethod> extraNewMethodSignatures,
+      Set<DexMethod> mergedMethods,
+      Set<DexMethod> staticizedMethods) {
+    super(
+        appView,
+        fieldMap,
+        Collections.emptyMap(),
+        mergedClasses.getBidirectionalMap(),
+        newMethodSignatures);
     this.mergedClasses = mergedClasses;
-    this.contextualVirtualToDirectMethodMaps = contextualVirtualToDirectMethodMaps;
+    this.contextualSuperToImplementationInContexts = contextualSuperToImplementationInContexts;
+    this.extraNewMethodSignatures = extraNewMethodSignatures;
     this.mergedMethods = mergedMethods;
-    this.originalMethodSignaturesForBridges = originalMethodSignaturesForBridges;
-    this.prototypeChanges = prototypeChanges;
+    this.staticizedMethods = staticizedMethods;
+  }
+
+  private boolean isMerged(DexMethod method) {
+    return mergedMethods.contains(method);
+  }
+
+  private boolean isStaticized(DexMethod method) {
+    return staticizedMethods.contains(method);
   }
 
   @Override
@@ -98,8 +108,46 @@ public class VerticalClassMergerGraphLens extends NestedGraphLens {
   }
 
   @Override
+  public VerticalClassMergerGraphLens asVerticalClassMergerLens() {
+    return this;
+  }
+
+  @Override
   public DexType getPreviousClassType(DexType type) {
     return type;
+  }
+
+  @Override
+  public DexField getNextFieldSignature(DexField previous) {
+    DexField field = super.getNextFieldSignature(previous);
+    assert field.verifyReferencedBaseTypesMatches(
+        type -> !mergedClasses.isMergeSource(type), dexItemFactory());
+    return field;
+  }
+
+  @Override
+  public DexMethod getNextMethodSignature(DexMethod previous) {
+    if (extraNewMethodSignatures.containsKey(previous)) {
+      return getNextImplementationMethodSignature(previous);
+    }
+    DexMethod method = super.getNextMethodSignature(previous);
+    assert method.verifyReferencedBaseTypesMatches(
+        type -> !mergedClasses.isMergeSource(type), dexItemFactory());
+    return method;
+  }
+
+  public DexMethod getNextBridgeMethodSignature(DexMethod previous) {
+    DexMethod method = newMethodSignatures.getRepresentativeValueOrDefault(previous, previous);
+    assert method.verifyReferencedBaseTypesMatches(
+        type -> !mergedClasses.isMergeSource(type), dexItemFactory());
+    return method;
+  }
+
+  public DexMethod getNextImplementationMethodSignature(DexMethod previous) {
+    DexMethod method = extraNewMethodSignatures.getRepresentativeValueOrDefault(previous, previous);
+    assert method.verifyReferencedBaseTypesMatches(
+        type -> !mergedClasses.isMergeSource(type), dexItemFactory());
+    return method;
   }
 
   @Override
@@ -113,57 +161,111 @@ public class VerticalClassMergerGraphLens extends NestedGraphLens {
   }
 
   @Override
+  protected MethodLookupResult internalLookupMethod(
+      DexMethod reference,
+      DexMethod context,
+      InvokeType type,
+      GraphLens codeLens,
+      LookupMethodContinuation continuation) {
+    if (this == codeLens) {
+      MethodLookupResult lookupResult =
+          MethodLookupResult.builder(this, codeLens)
+              .setReboundReference(reference)
+              .setReference(reference)
+              .setType(type)
+              .build();
+      return continuation.lookupMethod(lookupResult);
+    }
+    return super.internalLookupMethod(reference, context, type, codeLens, continuation);
+  }
+
+  @Override
   public MethodLookupResult internalDescribeLookupMethod(
       MethodLookupResult previous, DexMethod context, GraphLens codeLens) {
     assert context != null || verifyIsContextFreeForMethod(previous.getReference(), codeLens);
     assert context == null || previous.getType() != null;
-    if (previous.getType() == InvokeType.SUPER && !mergedMethods.contains(context)) {
-      Map<DexMethod, GraphLensLookupResultProvider> virtualToDirectMethodMap =
-          contextualVirtualToDirectMethodMaps.get(context.getHolderType());
-      if (virtualToDirectMethodMap != null) {
-        GraphLensLookupResultProvider result =
-            virtualToDirectMethodMap.get(previous.getReference());
-        if (result != null) {
-          // If the super class A of the enclosing class B (i.e., context.holder())
-          // has been merged into B during vertical class merging, and this invoke-super instruction
-          // was resolving to a method in A, then the target method has been changed to a direct
-          // method and moved into B, so that we need to use an invoke-direct instruction instead of
-          // invoke-super (or invoke-static, if the method was originally a default interface
-          // method).
-          return result.get(previous.getPrototypeChanges());
-        }
-      }
-    }
+    assert previous.hasReboundReference();
     MethodLookupResult lookupResult;
-    DexMethod newMethod = methodMap.apply(previous.getReference());
-    if (newMethod == null) {
-      lookupResult = previous;
-    } else {
+    DexMethod implementationReference = getImplementationTargetForInvokeSuper(previous, context);
+    if (implementationReference != null) {
       lookupResult =
-          MethodLookupResult.builder(this)
-              .setReference(newMethod)
+          MethodLookupResult.builder(this, codeLens)
+              .setReboundReference(implementationReference)
+              .setReference(implementationReference)
               .setPrototypeChanges(
-                  internalDescribePrototypeChanges(previous.getPrototypeChanges(), newMethod))
-              .setType(mapInvocationType(newMethod, previous.getReference(), previous.getType()))
+                  internalDescribePrototypeChanges(
+                      previous.getPrototypeChanges(),
+                      previous.getReboundReference(),
+                      implementationReference))
+              .setType(
+                  isStaticized(implementationReference) ? InvokeType.STATIC : InvokeType.VIRTUAL)
+              .build();
+    } else {
+      DexMethod newReboundReference = previous.getRewrittenReboundReference(newMethodSignatures);
+      assert newReboundReference.verifyReferencedBaseTypesMatches(
+          type -> !mergedClasses.isMergeSource(type), dexItemFactory());
+      DexMethod newReference =
+          previous.getRewrittenReferenceFromRewrittenReboundReference(
+              newReboundReference, this::getNextClassType, dexItemFactory());
+      lookupResult =
+          MethodLookupResult.builder(this, codeLens)
+              .setReboundReference(newReboundReference)
+              .setReference(newReference)
+              .setType(mapInvocationType(newReference, previous.getReference(), previous.getType()))
+              .setPrototypeChanges(
+                  internalDescribePrototypeChanges(
+                      previous.getPrototypeChanges(),
+                      previous.getReboundReference(),
+                      newReboundReference))
               .build();
     }
     assert !appView.testing().enableVerticalClassMergerLensAssertion
         || Streams.stream(lookupResult.getReference().getReferencedBaseTypes(dexItemFactory()))
-            .noneMatch(type -> mergedClasses.hasBeenMergedIntoSubtype(type));
+            .noneMatch(mergedClasses::hasBeenMergedIntoSubtype);
     return lookupResult;
+  }
+
+  private DexMethod getImplementationTargetForInvokeSuper(
+      MethodLookupResult previous, DexMethod context) {
+    if (previous.getType().isSuper() && !isMerged(context)) {
+      return contextualSuperToImplementationInContexts
+          .getOrDefault(context.getHolderType(), Collections.emptyMap())
+          .get(previous.getReference());
+    }
+    return null;
   }
 
   @Override
   protected RewrittenPrototypeDescription internalDescribePrototypeChanges(
-      RewrittenPrototypeDescription prototypeChanges, DexMethod method) {
-    return prototypeChanges.combine(
-        this.prototypeChanges.getOrDefault(method, RewrittenPrototypeDescription.none()));
+      RewrittenPrototypeDescription prototypeChanges,
+      DexMethod previousMethod,
+      DexMethod newMethod) {
+    if (isStaticized(newMethod)) {
+      // The receiver has been added as an explicit argument.
+      assert newMethod.getArity() == previousMethod.getArity() + 1;
+      RewrittenPrototypeDescription isConvertedToStaticMethod =
+          RewrittenPrototypeDescription.createForArgumentsInfo(
+              ArgumentInfoCollection.builder()
+                  .setArgumentInfosSize(newMethod.getParameters().size())
+                  .setIsConvertedToStaticMethod()
+                  .build());
+      return prototypeChanges.combine(isConvertedToStaticMethod);
+    }
+    if (newMethod.getArity() > previousMethod.getArity()) {
+      assert dexItemFactory().isConstructor(previousMethod);
+      RewrittenPrototypeDescription collisionResolution =
+          RewrittenPrototypeDescription.createForExtraParameters(
+              ExtraUnusedNullParameter.computeExtraUnusedNullParameters(previousMethod, newMethod));
+      return prototypeChanges.combine(collisionResolution);
+    }
+    assert newMethod.getArity() == previousMethod.getArity();
+    return prototypeChanges;
   }
 
   @Override
   public DexMethod getPreviousMethodSignature(DexMethod method) {
     return super.getPreviousMethodSignature(
-        originalMethodSignaturesForBridges.getOrDefault(method, method));
+        extraNewMethodSignatures.getRepresentativeKeyOrDefault(method, method));
   }
 
   @Override
@@ -174,8 +276,16 @@ public class VerticalClassMergerGraphLens extends NestedGraphLens {
 
   @Override
   protected InvokeType mapInvocationType(
-      DexMethod newMethod, DexMethod originalMethod, InvokeType type) {
-    return mapVirtualInterfaceInvocationTypes(appView, newMethod, originalMethod, type);
+      DexMethod newMethod, DexMethod previousMethod, InvokeType type) {
+    if (isStaticized(newMethod)) {
+      return InvokeType.STATIC;
+    }
+    if (type.isInterface()
+        && mergedClasses.hasInterfaceBeenMergedIntoClass(
+            previousMethod.getHolderType(), newMethod.getHolderType())) {
+      return InvokeType.VIRTUAL;
+    }
+    return type;
   }
 
   @Override
@@ -183,7 +293,7 @@ public class VerticalClassMergerGraphLens extends NestedGraphLens {
     if (codeLens == this) {
       return true;
     }
-    return contextualVirtualToDirectMethodMaps.isEmpty()
+    return contextualSuperToImplementationInContexts.isEmpty()
         && getPrevious().isContextFreeForMethods(codeLens);
   }
 
@@ -194,237 +304,227 @@ public class VerticalClassMergerGraphLens extends NestedGraphLens {
     }
     assert getPrevious().verifyIsContextFreeForMethod(method, codeLens);
     DexMethod previous = getPrevious().lookupMethod(method, null, null, codeLens).getReference();
-    assert contextualVirtualToDirectMethodMaps.values().stream()
+    assert contextualSuperToImplementationInContexts.values().stream()
         .noneMatch(virtualToDirectMethodMap -> virtualToDirectMethodMap.containsKey(previous));
     return true;
   }
 
-  public static class Builder {
+  public static class Builder
+      extends BuilderBase<VerticalClassMergerGraphLens, VerticallyMergedClasses> {
 
-    private final DexItemFactory dexItemFactory;
-
-    protected final MutableBidirectionalOneToOneMap<DexField, DexField> fieldMap =
+    protected final MutableBidirectionalOneToOneMap<DexField, DexField> newFieldSignatures =
         new BidirectionalOneToOneHashMap<>();
-    protected final Map<DexMethod, DexMethod> methodMap = new IdentityHashMap<>();
-    private final ImmutableSet.Builder<DexMethod> mergedMethodsBuilder = ImmutableSet.builder();
-    private final Map<DexType, Map<DexMethod, GraphLensLookupResultProvider>>
-        contextualVirtualToDirectMethodMaps = new IdentityHashMap<>();
+    protected final Map<DexField, DexField> pendingNewFieldSignatureUpdates =
+        new IdentityHashMap<>();
+
+    private final Map<DexType, Map<DexMethod, DexMethod>>
+        contextualSuperToImplementationInContexts = new IdentityHashMap<>();
 
     private final MutableBidirectionalManyToOneRepresentativeMap<DexMethod, DexMethod>
         newMethodSignatures = BidirectionalManyToOneRepresentativeHashMap.newIdentityHashMap();
-    private final Map<DexMethod, DexMethod> originalMethodSignaturesForBridges =
-        new IdentityHashMap<>();
-    private final Map<DexMethod, RewrittenPrototypeDescription> prototypeChanges =
+    private final Map<DexMethod, DexMethod> pendingNewMethodSignatureUpdates =
         new IdentityHashMap<>();
 
-    private final Map<DexProto, DexProto> cache = new IdentityHashMap<>();
+    private final MutableBidirectionalOneToOneMap<DexMethod, DexMethod> extraNewMethodSignatures =
+        new BidirectionalOneToOneHashMap<>();
+    private final Map<DexMethod, DexMethod> pendingExtraNewMethodSignatureUpdates =
+        new IdentityHashMap<>();
 
-    Builder(DexItemFactory dexItemFactory) {
-      this.dexItemFactory = dexItemFactory;
+    private final Set<DexMethod> mergedMethods = Sets.newIdentityHashSet();
+    private final Map<DexMethod, DexMethod> pendingMergedMethodUpdates = new IdentityHashMap<>();
+
+    private final Set<DexMethod> staticizedMethods = Sets.newIdentityHashSet();
+    private final Map<DexMethod, DexMethod> pendingStaticizedMethodUpdates =
+        new IdentityHashMap<>();
+
+    static Builder createBuilderForFixup(VerticalClassMergerResult verticalClassMergerResult) {
+      return verticalClassMergerResult.getLensBuilder();
     }
 
-    @SuppressWarnings("ReferenceEquality")
-    static Builder createBuilderForFixup(Builder builder, VerticallyMergedClasses mergedClasses) {
-      Builder newBuilder = new Builder(builder.dexItemFactory);
-      builder.fieldMap.forEach(
-          (key, value) ->
-              newBuilder.map(
-                  key, builder.getFieldSignatureAfterClassMerging(value, mergedClasses)));
-      for (Map.Entry<DexMethod, DexMethod> entry : builder.methodMap.entrySet()) {
-        newBuilder.map(
-            entry.getKey(),
-            builder.getMethodSignatureAfterClassMerging(entry.getValue(), mergedClasses));
-      }
-      for (DexMethod method : builder.mergedMethodsBuilder.build()) {
-        newBuilder.markMethodAsMerged(
-            builder.getMethodSignatureAfterClassMerging(method, mergedClasses));
-      }
-      for (Map.Entry<DexType, Map<DexMethod, GraphLensLookupResultProvider>> entry :
-          builder.contextualVirtualToDirectMethodMaps.entrySet()) {
-        DexType context = entry.getKey();
-        assert context == builder.getTypeAfterClassMerging(context, mergedClasses);
-        for (Map.Entry<DexMethod, GraphLensLookupResultProvider> innerEntry :
-            entry.getValue().entrySet()) {
-          DexMethod from = innerEntry.getKey();
-          MethodLookupResult rewriting =
-              innerEntry.getValue().get(RewrittenPrototypeDescription.none());
-          DexMethod to =
-              builder.getMethodSignatureAfterClassMerging(rewriting.getReference(), mergedClasses);
-          newBuilder.mapVirtualMethodToDirectInType(
-              from,
-              prototypeChanges ->
-                  new MethodLookupResult(to, null, rewriting.getType(), prototypeChanges),
-              context);
-        }
-      }
-      builder.newMethodSignatures.forEachManyToOneMapping(
-          (originalMethodSignatures, renamedMethodSignature, representative) -> {
-            DexMethod methodSignatureAfterClassMerging =
-                builder.getMethodSignatureAfterClassMerging(renamedMethodSignature, mergedClasses);
-            newBuilder.newMethodSignatures.put(
-                originalMethodSignatures, methodSignatureAfterClassMerging);
-            if (originalMethodSignatures.size() > 1) {
-              newBuilder.newMethodSignatures.setRepresentative(
-                  methodSignatureAfterClassMerging, representative);
+    @Override
+    public void addExtraParameters(
+        DexMethod from, DexMethod to, List<? extends ExtraParameter> extraParameters) {
+      // Intentionally empty.
+    }
+
+    @Override
+    public void commitPendingUpdates() {
+      // Commit new field signatures.
+      newFieldSignatures.putAll(pendingNewFieldSignatureUpdates);
+      pendingNewFieldSignatureUpdates.clear();
+
+      // Commit new method signatures.
+      Map<DexMethod, DexMethod> newMethodSignatureUpdates = new IdentityHashMap<>();
+      Map<DexMethod, DexMethod> newMethodSignatureRepresentativeUpdates = new IdentityHashMap<>();
+      pendingNewMethodSignatureUpdates.forEach(
+          (from, to) -> {
+            Set<DexMethod> originalMethodSignatures = newMethodSignatures.getKeys(from);
+            if (originalMethodSignatures.isEmpty()) {
+              newMethodSignatureUpdates.put(from, to);
+            } else {
+              for (DexMethod originalMethodSignature : originalMethodSignatures) {
+                newMethodSignatureUpdates.put(originalMethodSignature, to);
+              }
+              if (newMethodSignatures.hasExplicitRepresentativeKey(from)) {
+                assert originalMethodSignatures.size() > 1;
+                newMethodSignatureRepresentativeUpdates.put(
+                    to, newMethodSignatures.getRepresentativeKey(from));
+              } else {
+                assert originalMethodSignatures.size() == 1;
+              }
             }
           });
-      for (Map.Entry<DexMethod, DexMethod> entry :
-          builder.originalMethodSignaturesForBridges.entrySet()) {
-        newBuilder.recordCreationOfBridgeMethod(
-            entry.getValue(),
-            builder.getMethodSignatureAfterClassMerging(entry.getKey(), mergedClasses));
-      }
-      builder.prototypeChanges.forEach(
-          (method, prototypeChangesForMethod) ->
-              newBuilder.prototypeChanges.put(
-                  builder.getMethodSignatureAfterClassMerging(method, mergedClasses),
-                  prototypeChangesForMethod));
-      return newBuilder;
+      newMethodSignatures.removeValues(pendingNewMethodSignatureUpdates.keySet());
+      newMethodSignatures.putAll(newMethodSignatureUpdates);
+      newMethodSignatureRepresentativeUpdates.forEach(
+          (value, representative) -> {
+            assert newMethodSignatures.getKeys(value).size() > 1;
+            newMethodSignatures.setRepresentative(value, representative);
+          });
+      pendingNewMethodSignatureUpdates.clear();
+
+      // Commit extra new method signatures.
+      extraNewMethodSignatures.putAll(pendingExtraNewMethodSignatureUpdates);
+      pendingExtraNewMethodSignatureUpdates.clear();
+
+      // Commit merged methods.
+      mergedMethods.removeAll(pendingMergedMethodUpdates.keySet());
+      mergedMethods.addAll(pendingMergedMethodUpdates.values());
+      pendingMergedMethodUpdates.clear();
+
+      // Commit staticized methods.
+      staticizedMethods.removeAll(pendingStaticizedMethodUpdates.keySet());
+      staticizedMethods.addAll(pendingStaticizedMethodUpdates.values());
+      pendingStaticizedMethodUpdates.clear();
     }
 
+    @Override
+    public void fixupField(DexField oldFieldSignature, DexField newFieldSignature) {
+      DexField originalFieldSignature =
+          newFieldSignatures.getKeyOrDefault(oldFieldSignature, oldFieldSignature);
+      pendingNewFieldSignatureUpdates.put(originalFieldSignature, newFieldSignature);
+    }
+
+    @Override
+    public void fixupMethod(DexMethod oldMethodSignature, DexMethod newMethodSignature) {
+      if (extraNewMethodSignatures.containsValue(oldMethodSignature)) {
+        DexMethod originalMethodSignature = extraNewMethodSignatures.getKey(oldMethodSignature);
+        pendingExtraNewMethodSignatureUpdates.put(originalMethodSignature, newMethodSignature);
+      } else {
+        pendingNewMethodSignatureUpdates.put(oldMethodSignature, newMethodSignature);
+      }
+
+      if (mergedMethods.contains(oldMethodSignature)) {
+        pendingMergedMethodUpdates.put(oldMethodSignature, newMethodSignature);
+      }
+
+      if (staticizedMethods.contains(oldMethodSignature)) {
+        pendingStaticizedMethodUpdates.put(oldMethodSignature, newMethodSignature);
+      }
+    }
+
+    public void fixupContextualVirtualToDirectMethodMaps() {
+      for (Entry<DexType, Map<DexMethod, DexMethod>> entry :
+          contextualSuperToImplementationInContexts.entrySet()) {
+        for (Entry<DexMethod, DexMethod> innerEntry : entry.getValue().entrySet()) {
+          DexMethod virtualMethod = innerEntry.getValue();
+          DexMethod implementationMethod = extraNewMethodSignatures.get(virtualMethod);
+          assert implementationMethod != null;
+          innerEntry.setValue(implementationMethod);
+        }
+      }
+    }
+
+    @Override
+    public Set<DexMethod> getOriginalMethodReferences(DexMethod method) {
+      if (extraNewMethodSignatures.containsValue(method)) {
+        return Set.of(extraNewMethodSignatures.getKey(method));
+      }
+      Set<DexMethod> previousMethodSignatures = newMethodSignatures.getKeys(method);
+      if (!previousMethodSignatures.isEmpty()) {
+        return previousMethodSignatures;
+      }
+      return Set.of(method);
+    }
+
+    @Override
     public VerticalClassMergerGraphLens build(
         AppView<?> appView, VerticallyMergedClasses mergedClasses) {
-      if (mergedClasses.isEmpty()) {
-        return null;
-      }
       // Build new graph lens.
+      assert !mergedClasses.isEmpty();
       return new VerticalClassMergerGraphLens(
           appView,
           mergedClasses,
-          fieldMap,
-          methodMap,
-          mergedMethodsBuilder.build(),
-          contextualVirtualToDirectMethodMaps,
+          newFieldSignatures,
+          contextualSuperToImplementationInContexts,
           newMethodSignatures,
-          originalMethodSignaturesForBridges,
-          prototypeChanges);
+          extraNewMethodSignatures,
+          mergedMethods,
+          staticizedMethods);
     }
 
-    @SuppressWarnings("ReferenceEquality")
-    private DexField getFieldSignatureAfterClassMerging(
-        DexField field, VerticallyMergedClasses mergedClasses) {
-      assert !field.holder.isArrayType();
-
-      DexType holder = field.holder;
-      DexType newHolder = mergedClasses.getTargetForOrDefault(holder, holder);
-
-      DexType type = field.type;
-      DexType newType = getTypeAfterClassMerging(type, mergedClasses);
-
-      if (holder == newHolder && type == newType) {
-        return field;
-      }
-      return dexItemFactory.createField(newHolder, newType, field.name);
-    }
-
-    @SuppressWarnings("ReferenceEquality")
-    private DexMethod getMethodSignatureAfterClassMerging(
-        DexMethod signature, VerticallyMergedClasses mergedClasses) {
-      assert !signature.holder.isArrayType();
-
-      DexType holder = signature.holder;
-      DexType newHolder = mergedClasses.getTargetForOrDefault(holder, holder);
-
-      DexProto proto = signature.proto;
-      DexProto newProto =
-          dexItemFactory.applyClassMappingToProto(
-              proto, type -> getTypeAfterClassMerging(type, mergedClasses), cache);
-
-      if (holder == newHolder && proto == newProto) {
-        return signature;
-      }
-      return dexItemFactory.createMethod(newHolder, newProto, signature.name);
-    }
-
-    @SuppressWarnings("ReferenceEquality")
-    private DexType getTypeAfterClassMerging(DexType type, VerticallyMergedClasses mergedClasses) {
-      if (type.isArrayType()) {
-        DexType baseType = type.toBaseType(dexItemFactory);
-        DexType newBaseType = mergedClasses.getTargetForOrDefault(baseType, baseType);
-        if (newBaseType != baseType) {
-          return type.replaceBaseType(newBaseType, dexItemFactory);
-        }
-        return type;
-      }
-      return mergedClasses.getTargetForOrDefault(type, type);
-    }
-
+    // TODO: should be removed.
     public boolean hasMappingForSignatureInContext(DexProgramClass context, DexMethod signature) {
-      Map<DexMethod, GraphLensLookupResultProvider> virtualToDirectMethodMap =
-          contextualVirtualToDirectMethodMaps.get(context.type);
-      if (virtualToDirectMethodMap != null) {
-        return virtualToDirectMethodMap.containsKey(signature);
+      return contextualSuperToImplementationInContexts
+          .getOrDefault(context.getType(), Collections.emptyMap())
+          .containsKey(signature);
+    }
+
+    public void markMethodAsMerged(DexEncodedMethod method) {
+      mergedMethods.add(method.getReference());
+    }
+
+    public void recordMove(DexEncodedField from, DexEncodedField to) {
+      newFieldSignatures.put(from.getReference(), to.getReference());
+    }
+
+    public void recordMove(DexEncodedMethod from, DexEncodedMethod to) {
+      newMethodSignatures.put(from.getReference(), to.getReference());
+    }
+
+    public void recordSplit(
+        DexEncodedMethod from,
+        DexEncodedMethod override,
+        DexEncodedMethod bridge,
+        DexEncodedMethod implementation) {
+      if (override != null) {
+        assert bridge == null;
+        newMethodSignatures.put(from.getReference(), override.getReference());
+        newMethodSignatures.put(override.getReference(), override.getReference());
+        newMethodSignatures.setRepresentative(override.getReference(), override.getReference());
+      } else {
+        assert bridge != null;
+        newMethodSignatures.put(from.getReference(), bridge.getReference());
       }
-      return false;
-    }
 
-    public boolean hasOriginalSignatureMappingFor(DexField field) {
-      return fieldMap.containsValue(field);
-    }
+      if (implementation == null) {
+        assert from.isAbstract();
+        return;
+      }
 
-    public boolean hasOriginalSignatureMappingFor(DexMethod method) {
-      return newMethodSignatures.containsValue(method)
-          || originalMethodSignaturesForBridges.containsKey(method);
-    }
+      extraNewMethodSignatures.put(from.getReference(), implementation.getReference());
+      mergedMethods.add(implementation.getReference());
 
-    public void markMethodAsMerged(DexMethod method) {
-      mergedMethodsBuilder.add(method);
-    }
-
-    public void map(DexField from, DexField to) {
-      fieldMap.put(from, to);
-    }
-
-    public Builder map(DexMethod from, DexMethod to) {
-      methodMap.put(from, to);
-      return this;
-    }
-
-    public void recordMerge(DexMethod from, DexMethod to) {
-      newMethodSignatures.put(from, to);
-      newMethodSignatures.put(to, to);
-      newMethodSignatures.setRepresentative(to, to);
-    }
-
-    public void recordMove(DexMethod from, DexMethod to) {
-      recordMove(from, to, false);
-    }
-
-    public void recordMove(DexMethod from, DexMethod to, boolean isStaticized) {
-      newMethodSignatures.put(from, to);
-      if (isStaticized) {
-        RewrittenPrototypeDescription prototypeChangesForMethod =
-            RewrittenPrototypeDescription.create(
-                ImmutableList.of(),
-                null,
-                ArgumentInfoCollection.builder()
-                    .setArgumentInfosSize(to.getParameters().size())
-                    .setIsConvertedToStaticMethod()
-                    .build());
-        prototypeChanges.put(to, prototypeChangesForMethod);
+      if (implementation.isStatic()) {
+        staticizedMethods.add(implementation.getReference());
       }
     }
 
-    public void recordCreationOfBridgeMethod(DexMethod from, DexMethod to) {
-      originalMethodSignaturesForBridges.put(to, from);
+    public void mapVirtualMethodToDirectInType(DexMethod from, DexEncodedMethod to, DexType type) {
+      contextualSuperToImplementationInContexts
+          .computeIfAbsent(type, ignoreKey(IdentityHashMap::new))
+          .put(from, to.getReference());
     }
 
-    public void mapVirtualMethodToDirectInType(
-        DexMethod from, GraphLensLookupResultProvider to, DexType type) {
-      Map<DexMethod, GraphLensLookupResultProvider> virtualToDirectMethodMap =
-          contextualVirtualToDirectMethodMaps.computeIfAbsent(type, key -> new IdentityHashMap<>());
-      virtualToDirectMethodMap.put(from, to);
-    }
-
-    @SuppressWarnings("ReferenceEquality")
     public void merge(VerticalClassMergerGraphLens.Builder builder) {
-      fieldMap.putAll(builder.fieldMap);
-      methodMap.putAll(builder.methodMap);
-      mergedMethodsBuilder.addAll(builder.mergedMethodsBuilder.build());
+      newFieldSignatures.putAll(builder.newFieldSignatures);
+      mergedMethods.addAll(builder.mergedMethods);
       builder.newMethodSignatures.forEachManyToOneMapping(
           (keys, value, representative) -> {
             boolean isRemapping =
-                Iterables.any(keys, key -> newMethodSignatures.containsValue(key) && key != value);
+                Iterables.any(
+                    keys,
+                    key -> newMethodSignatures.containsValue(key) && key.isNotIdenticalTo(value));
             if (isRemapping) {
               // If I and J are merged into A and both I.m() and J.m() exists, then we may map J.m()
               // to I.m() as a result of merging J into A, and then subsequently merge I.m() to
@@ -453,19 +553,13 @@ public class VerticalClassMergerGraphLens extends NestedGraphLens {
               }
             }
           });
-      prototypeChanges.putAll(builder.prototypeChanges);
-      originalMethodSignaturesForBridges.putAll(builder.originalMethodSignaturesForBridges);
-      for (DexType context : builder.contextualVirtualToDirectMethodMaps.keySet()) {
-        Map<DexMethod, GraphLensLookupResultProvider> current =
-            contextualVirtualToDirectMethodMaps.get(context);
-        Map<DexMethod, GraphLensLookupResultProvider> other =
-            builder.contextualVirtualToDirectMethodMaps.get(context);
-        if (current != null) {
-          current.putAll(other);
-        } else {
-          contextualVirtualToDirectMethodMaps.put(context, other);
-        }
-      }
+      staticizedMethods.addAll(builder.staticizedMethods);
+      extraNewMethodSignatures.putAll(builder.extraNewMethodSignatures);
+      builder.contextualSuperToImplementationInContexts.forEach(
+          (key, value) ->
+              contextualSuperToImplementationInContexts
+                  .computeIfAbsent(key, ignoreKey(IdentityHashMap::new))
+                  .putAll(value));
     }
   }
 }

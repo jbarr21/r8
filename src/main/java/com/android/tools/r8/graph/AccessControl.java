@@ -3,11 +3,7 @@
 // BSD-style license that can be found in the LICENSE file.
 package com.android.tools.r8.graph;
 
-import com.android.tools.r8.features.ClassToFeatureSplitMap;
 import com.android.tools.r8.features.FeatureSplitBoundaryOptimizationUtils;
-import com.android.tools.r8.profile.startup.profile.StartupProfile;
-import com.android.tools.r8.synthesis.SyntheticItems;
-import com.android.tools.r8.utils.InternalOptions;
 import com.android.tools.r8.utils.OptionalBool;
 
 /**
@@ -19,37 +15,20 @@ import com.android.tools.r8.utils.OptionalBool;
 public class AccessControl {
 
   public static OptionalBool isClassAccessible(
-      DexClass clazz,
-      ProgramDefinition context,
-      AppView<? extends AppInfoWithClassHierarchy> appView) {
-    return isClassAccessible(
-        clazz,
-        context,
-        appView.appInfo().getClassToFeatureSplitMap(),
-        appView.options(),
-        appView.getStartupProfile(),
-        appView.getSyntheticItems());
+      DexClass clazz, Definition context, AppView<? extends AppInfoWithClassHierarchy> appView) {
+    return isClassAccessible(clazz, context, appView, appView.appInfo());
   }
 
   public static OptionalBool isClassAccessible(
-      DexClass clazz,
-      Definition context,
-      ClassToFeatureSplitMap classToFeatureSplitMap,
-      InternalOptions options,
-      StartupProfile startupProfile,
-      SyntheticItems syntheticItems) {
+      DexClass clazz, Definition context, AppView<?> appView, AppInfoWithClassHierarchy appInfo) {
+    assert appInfo != null;
     if (!clazz.isPublic() && !clazz.getType().isSamePackage(context.getContextType())) {
       return OptionalBool.FALSE;
     }
-    if (clazz.isProgramClass()
+    if (appView.hasClassHierarchy()
         && context.isProgramDefinition()
         && !FeatureSplitBoundaryOptimizationUtils.isSafeForAccess(
-            clazz.asProgramClass(),
-            context.asProgramDefinition(),
-            classToFeatureSplitMap,
-            options,
-            startupProfile,
-            syntheticItems)) {
+            clazz, context.asProgramDefinition(), appView.withClassHierarchy())) {
       return OptionalBool.UNKNOWN;
     }
     return OptionalBool.TRUE;
@@ -86,13 +65,7 @@ public class AccessControl {
       AppInfoWithClassHierarchy appInfo) {
     AccessFlags<?> memberFlags = member.getDefinition().getAccessFlags();
     OptionalBool classAccessibility =
-        isClassAccessible(
-            initialResolutionContext.getContextClass(),
-            context,
-            appInfo.getClassToFeatureSplitMap(),
-            appInfo.options(),
-            appView.getStartupProfile(),
-            appInfo.getSyntheticItems());
+        isClassAccessible(initialResolutionContext.getContextClass(), context, appView, appInfo);
     if (classAccessibility.isFalse()) {
       return OptionalBool.FALSE;
     }
@@ -105,6 +78,12 @@ public class AccessControl {
       }
       return classAccessibility;
     }
+    if (appView.hasClassHierarchy()
+        && context.isProgramDefinition()
+        && !FeatureSplitBoundaryOptimizationUtils.isSafeForAccess(
+            member, context.asProgramDefinition(), appView.withClassHierarchy())) {
+      return OptionalBool.UNKNOWN;
+    }
     if (member.getHolderType().isSamePackage(context.getContextType())) {
       return classAccessibility;
     }
@@ -115,7 +94,6 @@ public class AccessControl {
     return OptionalBool.FALSE;
   }
 
-  @SuppressWarnings("ReferenceEquality")
   private static boolean isNestMate(DexClass clazz, DexClass context) {
     if (clazz == context) {
       return true;
@@ -127,6 +105,6 @@ public class AccessControl {
     if (!clazz.isInANest() || !context.isInANest()) {
       return false;
     }
-    return clazz.getNestHost() == context.getNestHost();
+    return clazz.getNestHost().isIdenticalTo(context.getNestHost());
   }
 }

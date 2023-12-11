@@ -295,7 +295,6 @@ public final class LambdaDescriptor {
    * Matches call site for lambda metafactory invocation pattern and returns extracted match
    * information, or MATCH_FAILED if match failed.
    */
-  @SuppressWarnings("ReferenceEquality")
   static LambdaDescriptor infer(
       DexCallSite callSite,
       AppView<?> appView,
@@ -327,7 +326,10 @@ public final class LambdaDescriptor {
     DexValue.DexValueMethodType funcEnforcedSignature =
         getBootstrapArgument(callSite.bootstrapArgs, 2, DexValue.DexValueMethodType.class);
     if (!isEnforcedSignatureValid(
-        factory, funcEnforcedSignature.value, funcErasedSignature.value)) {
+        factory,
+        funcEnforcedSignature.value,
+        funcErasedSignature.value,
+        lambdaImplMethodHandle.asMethod())) {
       throw new Unreachable(
           "Enforced and erased signatures are inconsistent in " + callSite.toString());
     }
@@ -354,7 +356,7 @@ public final class LambdaDescriptor {
             mainFuncInterface,
             captures);
 
-    if (bootstrapMethod == factory.metafactoryMethod) {
+    if (factory.metafactoryMethod.isIdenticalTo(bootstrapMethod)) {
       if (callSite.bootstrapArgs.size() != 3) {
         throw new Unreachable(
             "Unexpected number of metafactory method arguments in " + callSite.toString());
@@ -439,8 +441,9 @@ public final class LambdaDescriptor {
   }
 
   private static boolean isEnforcedSignatureValid(
-      DexItemFactory factory, DexProto enforced, DexProto erased) {
-    if (!isSameOrDerived(factory, enforced.returnType, erased.returnType)) {
+      DexItemFactory factory, DexProto enforced, DexProto erased, DexMethod implMethod) {
+    if (!isSameOrDerivedReturnType(
+        factory, enforced.returnType, erased.returnType, implMethod.getReturnType())) {
       return false;
     }
     DexType[] enforcedValues = enforced.parameters.values;
@@ -457,12 +460,27 @@ public final class LambdaDescriptor {
     return true;
   }
 
-  @SuppressWarnings("ReferenceEquality")
+  static boolean isSameOrDerivedReturnType(
+      DexItemFactory factory, DexType subType, DexType superType, DexType actualReturnType) {
+    if (isSameOrDerived(factory, subType, superType)) {
+      return true;
+    }
+    // The linking invariants should apply to return types as stated in:
+    // https://docs.oracle.com/javase/8/docs/api/java/lang/invoke/LambdaMetafactory.html
+    // However, running examples on actual JVMs show they are not enforced for return types.
+    // It appears that a primitive type can appear in the interface type so long as the actual
+    // implementation method return type can be adapted to it.
+    if (subType.isPrimitiveType()) {
+      return LambdaMainMethodSourceCode.isSameOrAdaptableTo(actualReturnType, subType, factory);
+    }
+    return false;
+  }
+
   // Checks if the types are the same OR both types are reference types and
   // `subType` is derived from `b`. Note that in the latter case we only check if
   // both types are class types, for the reasons mentioned in isSameOrAdaptableTo(...).
   static boolean isSameOrDerived(DexItemFactory factory, DexType subType, DexType superType) {
-    if (subType == superType || (subType.isClassType() && superType.isClassType())) {
+    if (subType.isIdenticalTo(superType) || (subType.isClassType() && superType.isClassType())) {
       return true;
     }
 
@@ -472,7 +490,7 @@ public final class LambdaDescriptor {
         return isSameOrDerived(factory,
             subType.toArrayElementType(factory), superType.toArrayElementType(factory));
       }
-      return superType == factory.objectType; // T[] -> Object.
+      return superType.isIdenticalTo(factory.objectType); // T[] -> Object.
     }
 
     return false;

@@ -44,13 +44,23 @@ public @interface KeepBinding {
    * <p>Possible values are:
    *
    * <ul>
-   *   <li>ONLY_CLASS
-   *   <li>ONLY_MEMBERS
-   *   <li>CLASS_AND_MEMBERS
+   *   <li>{@link KeepItemKind#ONLY_CLASS}
+   *   <li>{@link KeepItemKind#ONLY_MEMBERS}
+   *   <li>{@link KeepItemKind#ONLY_METHODS}
+   *   <li>{@link KeepItemKind#ONLY_FIELDS}
+   *   <li>{@link KeepItemKind#CLASS_AND_MEMBERS}
+   *   <li>{@link KeepItemKind#CLASS_AND_METHODS}
+   *   <li>{@link KeepItemKind#CLASS_AND_FIELDS}
    * </ul>
    *
-   * <p>If unspecified the default for an item with no member patterns is ONLY_CLASS and if it does
-   * have member patterns the default is ONLY_MEMBERS
+   * <p>If unspecified the default kind for an item depends on its member patterns:
+   *
+   * <ul>
+   *   <li>{@link KeepItemKind#ONLY_CLASS} if no member patterns are defined
+   *   <li>{@link KeepItemKind#ONLY_METHODS} if method patterns are defined
+   *   <li>{@link KeepItemKind#ONLY_FIELDS} if field patterns are defined
+   *   <li>{@link KeepItemKind#ONLY_MEMBERS} otherwise.
+   * </ul>
    *
    * @return The kind for this pattern.
    */
@@ -288,9 +298,54 @@ public @interface KeepBinding {
    * <p>If none, and other properties define this item as a method, the default matches any return
    * type.
    *
+   * <p>Mutually exclusive with the following other properties defining return-type:
+   *
+   * <ul>
+   *   <li>methodReturnTypeConstant
+   *   <li>methodReturnTypePattern
+   * </ul>
+   *
    * @return The qualified type name of the method return type.
    */
   String methodReturnType() default "";
+
+  /**
+   * Define the method return-type pattern by a class constant.
+   *
+   * <p>Mutually exclusive with all field properties.
+   *
+   * <p>If none, and other properties define this item as a method, the default matches any return
+   * type.
+   *
+   * <p>Mutually exclusive with the following other properties defining return-type:
+   *
+   * <ul>
+   *   <li>methodReturnType
+   *   <li>methodReturnTypePattern
+   * </ul>
+   *
+   * @return A class constant denoting the type of the method return type.
+   */
+  Class<?> methodReturnTypeConstant() default Object.class;
+
+  /**
+   * Define the method return-type pattern by a type pattern.
+   *
+   * <p>Mutually exclusive with all field properties.
+   *
+   * <p>If none, and other properties define this item as a method, the default matches any return
+   * type.
+   *
+   * <p>Mutually exclusive with the following other properties defining return-type:
+   *
+   * <ul>
+   *   <li>methodReturnType
+   *   <li>methodReturnTypeConstant
+   * </ul>
+   *
+   * @return The pattern of the method return type.
+   */
+  TypePattern methodReturnTypePattern() default @TypePattern(name = "");
 
   /**
    * Define the method parameters pattern by a list of fully qualified types.
@@ -300,9 +355,25 @@ public @interface KeepBinding {
    * <p>If none, and other properties define this item as a method, the default matches any
    * parameters.
    *
+   * <p>Mutually exclusive with the property `methodParameterTypePatterns` also defining parameters.
+   *
    * @return The list of qualified type names of the method parameters.
    */
-  String[] methodParameters() default {"<default>"};
+  String[] methodParameters() default {""};
+
+  /**
+   * Define the method parameters pattern by a list of patterns on types.
+   *
+   * <p>Mutually exclusive with all field properties.
+   *
+   * <p>If none, and other properties define this item as a method, the default matches any
+   * parameters.
+   *
+   * <p>Mutually exclusive with the property `methodParameters` also defining parameters.
+   *
+   * @return The list of type patterns for the method parameters.
+   */
+  TypePattern[] methodParameterTypePatterns() default {@TypePattern(name = "")};
 
   /**
    * Define the field-access pattern by matching on access flags.
@@ -335,7 +406,50 @@ public @interface KeepBinding {
    *
    * <p>If none, and other properties define this item as a field, the default matches any type.
    *
-   * @return The qualified type name of the field type.
+   * <p>Mutually exclusive with the following other properties defining field-type:
+   *
+   * <ul>
+   *   <li>fieldTypeConstant
+   *   <li>fieldTypePattern
+   * </ul>
+   *
+   * @return The qualified type name for the field type.
    */
   String fieldType() default "";
+
+  /**
+   * Define the field-type pattern by a class constant.
+   *
+   * <p>Mutually exclusive with all method properties.
+   *
+   * <p>If none, and other properties define this item as a field, the default matches any type.
+   *
+   * <p>Mutually exclusive with the following other properties defining field-type:
+   *
+   * <ul>
+   *   <li>fieldType
+   *   <li>fieldTypePattern
+   * </ul>
+   *
+   * @return The class constant for the field type.
+   */
+  Class<?> fieldTypeConstant() default Object.class;
+
+  /**
+   * Define the field-type pattern by a pattern on types.
+   *
+   * <p>Mutually exclusive with all method properties.
+   *
+   * <p>If none, and other properties define this item as a field, the default matches any type.
+   *
+   * <p>Mutually exclusive with the following other properties defining field-type:
+   *
+   * <ul>
+   *   <li>fieldType
+   *   <li>fieldTypeConstant
+   * </ul>
+   *
+   * @return The type pattern for the field type.
+   */
+  TypePattern fieldTypePattern() default @TypePattern(name = "");
 }

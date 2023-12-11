@@ -10,7 +10,7 @@ import com.android.tools.r8.graph.lens.DefaultNonIdentityGraphLens;
 import com.android.tools.r8.utils.collections.BidirectionalManyToOneMap;
 import java.util.Set;
 
-class BridgeHoistingLens extends DefaultNonIdentityGraphLens {
+public class BridgeHoistingLens extends DefaultNonIdentityGraphLens {
 
   // Mapping from non-hoisted bridge methods to hoisted bridge methods.
   private final BidirectionalManyToOneMap<DexMethod, DexMethod> bridgeToHoistedBridgeMap;
@@ -18,7 +18,7 @@ class BridgeHoistingLens extends DefaultNonIdentityGraphLens {
   public BridgeHoistingLens(
       AppView<?> appView,
       BidirectionalManyToOneMap<DexMethod, DexMethod> bridgeToHoistedBridgeMap) {
-    super(appView.dexItemFactory(), appView.graphLens());
+    super(appView);
     this.bridgeToHoistedBridgeMap = bridgeToHoistedBridgeMap;
   }
 

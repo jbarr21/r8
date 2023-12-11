@@ -75,7 +75,9 @@ public abstract class R8TestBuilder<T extends R8TestBuilder<T>>
 
   private AllowedDiagnosticMessages allowedDiagnosticMessages = AllowedDiagnosticMessages.NONE;
   private boolean allowUnusedProguardConfigurationRules = false;
+  private boolean enableIsolatedSplits = false;
   private boolean enableMissingLibraryApiModeling = true;
+  private boolean enableStartupLayoutOptimization = true;
   private CollectingGraphConsumer graphConsumer = null;
   private final List<ExternalArtProfile> residualArtProfiles = new ArrayList<>();
   private final List<String> keepRules = new ArrayList<>();
@@ -151,7 +153,9 @@ public abstract class R8TestBuilder<T extends R8TestBuilder<T>>
     ToolHelper.addSyntheticProguardRulesConsumerForTesting(
         builder, rules -> box.syntheticProguardRules = rules);
     libraryDesugaringTestConfiguration.configure(builder);
+    builder.setEnableExperimentalIsolatedSplits(enableIsolatedSplits);
     builder.setEnableExperimentalMissingLibraryApiModeling(enableMissingLibraryApiModeling);
+    builder.setEnableStartupLayoutOptimization(enableStartupLayoutOptimization);
     StringBuilder pgConfOutput = wrapProguardConfigConsumer(builder);
     ToolHelper.runAndBenchmarkR8WithoutResult(builder, optionsConsumer, benchmarkResults);
     R8TestCompileResult compileResult =
@@ -854,6 +858,11 @@ public abstract class R8TestBuilder<T extends R8TestBuilder<T>>
     return self();
   }
 
+  public T enableIsolatedSplits(boolean enableIsolatedSplits) {
+    this.enableIsolatedSplits = enableIsolatedSplits;
+    return self();
+  }
+
   public T addArtProfileForRewriting(ArtProfileProvider artProfileProvider) {
     return addArtProfileForRewriting(
         artProfileProvider,
@@ -877,6 +886,11 @@ public abstract class R8TestBuilder<T extends R8TestBuilder<T>>
 
   public T addStartupProfileProviders(Collection<StartupProfileProvider> startupProfileProviders) {
     builder.addStartupProfileProviders(startupProfileProviders);
+    return self();
+  }
+
+  public T enableStartupLayoutOptimization(boolean enableStartupLayoutOptimization) {
+    this.enableStartupLayoutOptimization = enableStartupLayoutOptimization;
     return self();
   }
 

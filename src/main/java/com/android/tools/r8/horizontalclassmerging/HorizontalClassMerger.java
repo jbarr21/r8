@@ -6,6 +6,7 @@ package com.android.tools.r8.horizontalclassmerging;
 
 import static com.android.tools.r8.graph.DexClassAndMethod.asProgramMethodOrNull;
 
+import com.android.tools.r8.classmerging.SyntheticArgumentClass;
 import com.android.tools.r8.graph.AppInfo;
 import com.android.tools.r8.graph.AppInfoWithClassHierarchy;
 import com.android.tools.r8.graph.AppView;
@@ -14,9 +15,7 @@ import com.android.tools.r8.graph.DexMethod;
 import com.android.tools.r8.graph.DexProgramClass;
 import com.android.tools.r8.graph.ProgramMethod;
 import com.android.tools.r8.graph.PrunedItems;
-import com.android.tools.r8.graph.lens.MethodLookupResult;
 import com.android.tools.r8.horizontalclassmerging.code.SyntheticInitializerConverter;
-import com.android.tools.r8.ir.code.InvokeType;
 import com.android.tools.r8.ir.conversion.MethodConversionOptions;
 import com.android.tools.r8.ir.conversion.MethodConversionOptions.MutableMethodConversionOptions;
 import com.android.tools.r8.profile.art.ArtProfileCompletenessChecker;
@@ -170,7 +169,13 @@ public class HorizontalClassMerger {
 
     HorizontalClassMergerGraphLens horizontalClassMergerGraphLens =
         createLens(
-            mergedClasses, lensBuilder, mode, profileCollectionAdditions, syntheticArgumentClass);
+            mergedClasses,
+            lensBuilder,
+            mode,
+            profileCollectionAdditions,
+            syntheticArgumentClass,
+            executorService,
+            timing);
     profileCollectionAdditions =
         profileCollectionAdditions.rewriteMethodReferences(
             horizontalClassMergerGraphLens::getNextMethodToInvoke);
@@ -250,14 +255,10 @@ public class HorizontalClassMerger {
               for (VirtuallyMergedMethodsKeepInfo virtuallyMergedMethodsKeepInfo :
                   virtuallyMergedMethodsKeepInfos) {
                 DexMethod representative = virtuallyMergedMethodsKeepInfo.getRepresentative();
-                MethodLookupResult lookupResult =
-                    horizontalClassMergerGraphLens.lookupMethod(
-                        representative,
-                        null,
-                        InvokeType.VIRTUAL,
-                        horizontalClassMergerGraphLens.getPrevious());
+                DexMethod mergedMethodReference =
+                    horizontalClassMergerGraphLens.getNextMethodToInvoke(representative);
                 ProgramMethod mergedMethod =
-                    asProgramMethodOrNull(appView.definitionFor(lookupResult.getReference()));
+                    asProgramMethodOrNull(appView.definitionFor(mergedMethodReference));
                 if (mergedMethod != null) {
                   keepInfo.joinMethod(
                       mergedMethod,
@@ -348,8 +349,7 @@ public class HorizontalClassMerger {
       return appView
           .app()
           .builder()
-          .removeProgramClasses(
-              clazz -> mergedClasses.hasBeenMergedIntoDifferentType(clazz.getType()))
+          .removeProgramClasses(clazz -> mergedClasses.isMergeSource(clazz.getType()))
           .build();
     }
   }
@@ -413,8 +413,8 @@ public class HorizontalClassMerger {
   }
 
   /**
-   * Fix all references to merged classes using the {@link TreeFixer}. Construct a graph lens
-   * containing all changes performed by horizontal class merging.
+   * Fix all references to merged classes using the {@link HorizontalClassMergerTreeFixer}.
+   * Construct a graph lens containing all changes performed by horizontal class merging.
    */
   @SuppressWarnings("ReferenceEquality")
   private HorizontalClassMergerGraphLens createLens(
@@ -422,15 +422,18 @@ public class HorizontalClassMerger {
       HorizontalClassMergerGraphLens.Builder lensBuilder,
       Mode mode,
       ProfileCollectionAdditions profileCollectionAdditions,
-      SyntheticArgumentClass syntheticArgumentClass) {
-    return new TreeFixer(
+      SyntheticArgumentClass syntheticArgumentClass,
+      ExecutorService executorService,
+      Timing timing)
+      throws ExecutionException {
+    return new HorizontalClassMergerTreeFixer(
             appView,
             mergedClasses,
             lensBuilder,
             mode,
             profileCollectionAdditions,
             syntheticArgumentClass)
-        .fixupTypeReferences();
+        .run(executorService, timing);
   }
 
   @SuppressWarnings("ReferenceEquality")

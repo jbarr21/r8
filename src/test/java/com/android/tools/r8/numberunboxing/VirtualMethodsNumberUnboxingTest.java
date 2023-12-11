@@ -6,7 +6,7 @@ package com.android.tools.r8.numberunboxing;
 
 import static com.android.tools.r8.utils.codeinspector.Matchers.isPresent;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import com.android.tools.r8.NeverInline;
 import com.android.tools.r8.TestBase;
@@ -16,14 +16,13 @@ import com.android.tools.r8.utils.codeinspector.ClassSubject;
 import com.android.tools.r8.utils.codeinspector.CodeInspector;
 import com.android.tools.r8.utils.codeinspector.MethodSubject;
 import java.util.Objects;
-import org.hamcrest.CoreMatchers;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
 
 @RunWith(Parameterized.class)
-public class SimpleNumberUnboxingTest extends TestBase {
+public class VirtualMethodsNumberUnboxingTest extends TestBase {
 
   private final TestParameters parameters;
 
@@ -32,7 +31,7 @@ public class SimpleNumberUnboxingTest extends TestBase {
     return getTestParameters().withAllRuntimesAndApiLevels().build();
   }
 
-  public SimpleNumberUnboxingTest(TestParameters parameters) {
+  public VirtualMethodsNumberUnboxingTest(TestParameters parameters) {
     this.parameters = parameters;
   }
 
@@ -43,35 +42,9 @@ public class SimpleNumberUnboxingTest extends TestBase {
         .addKeepMainRule(Main.class)
         .enableInliningAnnotations()
         .addOptionsModification(opt -> opt.testing.enableNumberUnboxer = true)
-        .addOptionsModification(opt -> opt.testing.printNumberUnboxed = true)
         .setMinApi(parameters)
-        .allowDiagnosticWarningMessages()
         .compile()
         .inspect(this::assertUnboxing)
-        .assertWarningMessageThatMatches(
-            CoreMatchers.containsString(
-                "Unboxing of arg 0 of void"
-                    + " com.android.tools.r8.numberunboxing.SimpleNumberUnboxingTest$Main.print(java.lang.Integer)"))
-        .assertWarningMessageThatMatches(
-            CoreMatchers.containsString(
-                "Unboxing of arg 0 of void"
-                    + " com.android.tools.r8.numberunboxing.SimpleNumberUnboxingTest$Main.forwardToPrint2(java.lang.Integer)"))
-        .assertWarningMessageThatMatches(
-            CoreMatchers.containsString(
-                "Unboxing of arg 0 of void"
-                    + " com.android.tools.r8.numberunboxing.SimpleNumberUnboxingTest$Main.directPrintUnbox(java.lang.Integer)"))
-        .assertWarningMessageThatMatches(
-            CoreMatchers.containsString(
-                "Unboxing of arg 0 of void"
-                    + " com.android.tools.r8.numberunboxing.SimpleNumberUnboxingTest$Main.forwardToPrint(java.lang.Integer)"))
-        .assertWarningMessageThatMatches(
-            CoreMatchers.containsString(
-                "Unboxing of return value of java.lang.Integer"
-                    + " com.android.tools.r8.numberunboxing.SimpleNumberUnboxingTest$Main.get()"))
-        .assertWarningMessageThatMatches(
-            CoreMatchers.containsString(
-                "Unboxing of return value of java.lang.Integer"
-                    + " com.android.tools.r8.numberunboxing.SimpleNumberUnboxingTest$Main.forwardGet()"))
         .run(parameters.getRuntime(), Main.class)
         .assertSuccessWithOutputLines("32", "33", "42", "43", "51", "52", "2");
   }
@@ -79,15 +52,19 @@ public class SimpleNumberUnboxingTest extends TestBase {
   private void assertFirstParameterUnboxed(ClassSubject mainClass, String methodName) {
     MethodSubject methodSubject = mainClass.uniqueMethodWithOriginalName(methodName);
     assertThat(methodSubject, isPresent());
-    assertEquals("java.lang.Integer", methodSubject.getOriginalSignature().parameters[0]);
-    assertEquals("int", methodSubject.getFinalSignature().asMethodSignature().parameters[0]);
+    assertTrue(methodSubject.getProgramMethod().getParameter(0).isIntType());
+  }
+
+  private void assertFirstParameterBoxed(ClassSubject mainClass, String methodName) {
+    MethodSubject methodSubject = mainClass.uniqueMethodWithOriginalName(methodName);
+    assertThat(methodSubject, isPresent());
+    assertTrue(methodSubject.getProgramMethod().getParameter(0).isReferenceType());
   }
 
   private void assertReturnUnboxed(ClassSubject mainClass, String methodName) {
     MethodSubject methodSubject = mainClass.uniqueMethodWithOriginalName(methodName);
     assertThat(methodSubject, isPresent());
-    assertEquals("java.lang.Integer", methodSubject.getOriginalSignature().type);
-    assertEquals("int", methodSubject.getFinalSignature().asMethodSignature().type);
+    assertTrue(methodSubject.getProgramMethod().getReturnType().isIntType());
   }
 
   private void assertUnboxing(CodeInspector codeInspector) {
@@ -101,63 +78,68 @@ public class SimpleNumberUnboxingTest extends TestBase {
 
     assertReturnUnboxed(mainClass, "get");
     assertReturnUnboxed(mainClass, "forwardGet");
+
+    assertFirstParameterBoxed(mainClass, "directPrintNotUnbox");
   }
 
   static class Main {
 
+    private static final Main MAIN = new Main();
+
     public static void main(String[] args) {
+
       // The number unboxer should immediately find this method is worth unboxing.
-      directPrintUnbox(31);
-      directPrintUnbox(32);
+      MAIN.directPrintUnbox(31);
+      MAIN.directPrintUnbox(32);
 
       // The number unboxer should find the chain of calls is worth unboxing.
-      forwardToPrint(41);
-      forwardToPrint(42);
+      MAIN.forwardToPrint(41);
+      MAIN.forwardToPrint(42);
 
       // The number unboxer should find this method is *not* worth unboxing.
       Integer decode1 = Integer.decode("51");
       Objects.requireNonNull(decode1);
-      directPrintNotUnbox(decode1);
+      MAIN.directPrintNotUnbox(decode1);
       Integer decode2 = Integer.decode("52");
       Objects.requireNonNull(decode2);
-      directPrintNotUnbox(decode2);
+      MAIN.directPrintNotUnbox(decode2);
 
       // The number unboxer should unbox the return values.
-      System.out.println(forwardGet() + 1);
+      System.out.println(MAIN.forwardGet() + 1);
     }
 
     @NeverInline
-    private static Integer get() {
+    public Integer get() {
       return System.currentTimeMillis() > 0 ? 1 : -1;
     }
 
     @NeverInline
-    private static Integer forwardGet() {
+    public Integer forwardGet() {
       return get();
     }
 
     @NeverInline
-    private static void forwardToPrint(Integer boxed) {
+    public void forwardToPrint(Integer boxed) {
       forwardToPrint2(boxed);
     }
 
     @NeverInline
-    private static void forwardToPrint2(Integer boxed) {
+    public void forwardToPrint2(Integer boxed) {
       print(boxed);
     }
 
     @NeverInline
-    private static void print(Integer boxed) {
+    public void print(Integer boxed) {
       System.out.println(boxed + 1);
     }
 
     @NeverInline
-    private static void directPrintUnbox(Integer boxed) {
+    public void directPrintUnbox(Integer boxed) {
       System.out.println(boxed + 1);
     }
 
     @NeverInline
-    private static void directPrintNotUnbox(Integer boxed) {
+    public void directPrintNotUnbox(Integer boxed) {
       System.out.println(boxed);
     }
   }

@@ -87,10 +87,15 @@ public final class AnnotationConstants {
     public static final String methodAccess = "methodAccess";
     public static final String methodName = "methodName";
     public static final String methodReturnType = "methodReturnType";
+    public static final String methodReturnTypeConstant = "methodReturnTypeConstant";
+    public static final String methodReturnTypePattern = "methodReturnTypePattern";
     public static final String methodParameters = "methodParameters";
+    public static final String methodParameterTypePatterns = "methodParameterTypePatterns";
     public static final String fieldAccess = "fieldAccess";
     public static final String fieldName = "fieldName";
     public static final String fieldType = "fieldType";
+    public static final String fieldTypeConstant = "fieldTypeConstant";
+    public static final String fieldTypePattern = "fieldTypePattern";
   }
 
   public static final class Binding {
@@ -111,6 +116,7 @@ public final class AnnotationConstants {
     public static final String DESCRIPTOR =
         "Lcom/android/tools/r8/keepanno/annotations/KeepTarget;";
     public static final String kind = "kind";
+    public static final String constraints = "constraints";
     public static final String allow = "allow";
     public static final String disallow = "disallow";
   }
@@ -121,7 +127,30 @@ public final class AnnotationConstants {
         "Lcom/android/tools/r8/keepanno/annotations/KeepItemKind;";
     public static final String ONLY_CLASS = "ONLY_CLASS";
     public static final String ONLY_MEMBERS = "ONLY_MEMBERS";
+    public static final String ONLY_METHODS = "ONLY_METHODS";
+    public static final String ONLY_FIELDS = "ONLY_FIELDS";
     public static final String CLASS_AND_MEMBERS = "CLASS_AND_MEMBERS";
+    public static final String CLASS_AND_METHODS = "CLASS_AND_METHODS";
+    public static final String CLASS_AND_FIELDS = "CLASS_AND_FIELDS";
+  }
+
+  public static final class Constraints {
+    public static final String SIMPLE_NAME = "KeepConstraint";
+    public static final String DESCRIPTOR =
+        "Lcom/android/tools/r8/keepanno/annotations/KeepConstraint;";
+    public static final String LOOKUP = "LOOKUP";
+    public static final String NAME = "NAME";
+    public static final String VISIBILITY_RELAX = "VISIBILITY_RELAX";
+    public static final String VISIBILITY_RESTRICT = "VISIBILITY_RESTRICT";
+    public static final String CLASS_INSTANTIATE = "CLASS_INSTANTIATE";
+    public static final String METHOD_INVOKE = "METHOD_INVOKE";
+    public static final String FIELD_GET = "FIELD_GET";
+    public static final String FIELD_SET = "FIELD_SET";
+    public static final String METHOD_REPLACE = "METHOD_REPLACE";
+    public static final String FIELD_REPLACE = "FIELD_REPLACE";
+    public static final String NEVER_INLINE = "NEVER_INLINE";
+    public static final String CLASS_OPEN_HIERARCHY = "CLASS_OPEN_HIERARCHY";
+    public static final String ANNOTATIONS = "ANNOTATIONS";
   }
 
   public static final class Option {
@@ -166,5 +195,13 @@ public final class AnnotationConstants {
         "Lcom/android/tools/r8/keepanno/annotations/FieldAccessFlags;";
     public static final String VOLATILE = "VOLATILE";
     public static final String TRANSIENT = "TRANSIENT";
+  }
+
+  public static final class TypePattern {
+    public static final String SIMPLE_NAME = "TypePattern";
+    public static final String DESCRIPTOR =
+        "Lcom/android/tools/r8/keepanno/annotations/TypePattern;";
+    public static final String name = "name";
+    public static final String constant = "constant";
   }
 }

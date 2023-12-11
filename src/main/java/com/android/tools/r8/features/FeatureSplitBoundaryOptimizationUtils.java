@@ -4,96 +4,74 @@
 
 package com.android.tools.r8.features;
 
+import static com.android.tools.r8.graph.DexEncodedMethod.CompilationState.PROCESSED_INLINING_CANDIDATE_ANY;
+
 import com.android.tools.r8.FeatureSplit;
 import com.android.tools.r8.graph.AppInfoWithClassHierarchy;
 import com.android.tools.r8.graph.AppView;
-import com.android.tools.r8.graph.DexEncodedMember;
+import com.android.tools.r8.graph.Definition;
 import com.android.tools.r8.graph.DexProgramClass;
 import com.android.tools.r8.graph.ProgramDefinition;
 import com.android.tools.r8.graph.ProgramMethod;
-import com.android.tools.r8.ir.optimize.Inliner.ConstraintWithTarget;
-import com.android.tools.r8.profile.startup.profile.StartupProfile;
-import com.android.tools.r8.synthesis.SyntheticItems;
-import com.android.tools.r8.utils.InternalOptions;
-import com.android.tools.r8.utils.OptionalBool;
 
 public class FeatureSplitBoundaryOptimizationUtils {
 
-  public static ConstraintWithTarget getInliningConstraintForResolvedMember(
-      ProgramMethod method,
-      DexEncodedMember<?, ?> resolvedMember,
-      AppView<? extends AppInfoWithClassHierarchy> appView) {
-    ClassToFeatureSplitMap classToFeatureSplitMap = appView.appInfo().getClassToFeatureSplitMap();
-    // We never inline into the base from a feature (calls should never happen) and we never inline
-    // between features, so this check should be sufficient.
-    if (classToFeatureSplitMap.isInBaseOrSameFeatureAs(
-        resolvedMember.getHolderType(), method, appView)) {
-      return ConstraintWithTarget.ALWAYS;
-    }
-    return ConstraintWithTarget.NEVER;
-  }
-
   public static FeatureSplit getMergeKeyForHorizontalClassMerging(
       DexProgramClass clazz, AppView<? extends AppInfoWithClassHierarchy> appView) {
-    ClassToFeatureSplitMap classToFeatureSplitMap = appView.appInfo().getClassToFeatureSplitMap();
-    return classToFeatureSplitMap.getFeatureSplit(clazz, appView);
+    return appView.appInfo().getClassToFeatureSplitMap().getFeatureSplit(clazz, appView);
   }
 
   public static boolean isSafeForAccess(
-      DexProgramClass accessedClass,
-      ProgramDefinition accessor,
-      ClassToFeatureSplitMap classToFeatureSplitMap,
-      InternalOptions options,
-      StartupProfile startupProfile,
-      SyntheticItems syntheticItems) {
-    return classToFeatureSplitMap.isInBaseOrSameFeatureAs(
-        accessedClass, accessor, options, startupProfile, syntheticItems);
+      Definition definition,
+      ProgramDefinition context,
+      AppView<? extends AppInfoWithClassHierarchy> appView) {
+    return !appView.options().hasFeatureSplitConfiguration()
+        || !definition.isProgramDefinition()
+        || isSafeForAccess(definition.asProgramDefinition(), context, appView);
+  }
+
+  private static boolean isSafeForAccess(
+      ProgramDefinition definition,
+      ProgramDefinition context,
+      AppView<? extends AppInfoWithClassHierarchy> appView) {
+    assert appView.options().hasFeatureSplitConfiguration();
+    ClassToFeatureSplitMap classToFeatureSplitMap = appView.appInfo().getClassToFeatureSplitMap();
+    if (classToFeatureSplitMap.isInSameFeature(definition, context, appView)) {
+      return true;
+    }
+    if (!classToFeatureSplitMap.isInBase(definition, appView)) {
+      return false;
+    }
+    // If isolated splits are enabled then the resolved method must be public.
+    if (appView.options().getFeatureSplitConfiguration().isIsolatedSplitsEnabled()
+        && !definition.getAccessFlags().isPublic()) {
+      return false;
+    }
+    return true;
   }
 
   public static boolean isSafeForInlining(
       ProgramMethod caller,
       ProgramMethod callee,
       AppView<? extends AppInfoWithClassHierarchy> appView) {
-    ClassToFeatureSplitMap classToFeatureSplitMap = appView.appInfo().getClassToFeatureSplitMap();
-    FeatureSplit callerFeatureSplit = classToFeatureSplitMap.getFeatureSplit(caller, appView);
-    FeatureSplit calleeFeatureSplit = classToFeatureSplitMap.getFeatureSplit(callee, appView);
-
-    // First guarantee that we don't cross any actual feature split boundaries.
-    if (!calleeFeatureSplit.isBase()) {
-      if (calleeFeatureSplit != callerFeatureSplit) {
-        return false;
-      }
+    if (!appView.options().hasFeatureSplitConfiguration()) {
+      return true;
     }
-
-    // Next perform startup checks.
-    if (!callee.getOptimizationInfo().forceInline()) {
-      StartupProfile startupProfile = appView.getStartupProfile();
-      OptionalBool callerIsStartupMethod = isStartupMethod(caller, startupProfile);
-      if (callerIsStartupMethod.isTrue()) {
-        // If the caller is a startup method, then only allow inlining if the callee is also a
-        // startup method.
-        if (isStartupMethod(callee, startupProfile).isFalse()) {
-          return false;
-        }
-      } else if (callerIsStartupMethod.isFalse()) {
-        // If the caller is not a startup method, then only allow inlining if the caller is not a
-        // startup class or the callee is a startup class.
-        if (startupProfile.isStartupClass(caller.getHolderType())
-            && !startupProfile.isStartupClass(callee.getHolderType())) {
-          return false;
-        }
-      }
+    ClassToFeatureSplitMap classToFeatureSplitMap = appView.appInfo().getClassToFeatureSplitMap();
+    if (classToFeatureSplitMap.isInSameFeature(caller, callee, appView)) {
+      return true;
+    }
+    // Check that we don't cross any actual feature split boundaries.
+    if (!classToFeatureSplitMap.isInBase(callee, appView)) {
+      return false;
+    }
+    // Check that inlining can't lead to accessing a package-private item in base when using
+    // isolated splits.
+    if (appView.options().getFeatureSplitConfiguration().isIsolatedSplitsEnabled()
+        && callee.getDefinition().getCompilationState() != PROCESSED_INLINING_CANDIDATE_ANY) {
+      return false;
     }
     return true;
-  }
-
-  private static OptionalBool isStartupMethod(ProgramMethod method, StartupProfile startupProfile) {
-    if (method.getDefinition().isD8R8Synthesized()) {
-      // Due to inadequate rewriting of the startup list during desugaring, we do not give an
-      // accurate result in this case.
-      return OptionalBool.unknown();
-    }
-    return OptionalBool.of(startupProfile.containsMethodRule(method.getReference()));
   }
 
   public static boolean isSafeForVerticalClassMerging(
@@ -107,19 +85,9 @@ public class FeatureSplitBoundaryOptimizationUtils {
     // First guarantee that we don't cross any actual feature split boundaries.
     if (targetFeatureSplit.isBase()) {
       assert sourceFeatureSplit.isBase() : "Unexpected class in base that inherits from feature";
+      return true;
     } else {
-      if (sourceFeatureSplit != targetFeatureSplit) {
-        return false;
-      }
+      return sourceFeatureSplit == targetFeatureSplit;
     }
-
-    // If the source class is a startup class then require that the target class is also a startup
-    // class.
-    StartupProfile startupProfile = appView.getStartupProfile();
-    if (startupProfile.isStartupClass(sourceClass.getType())
-        && !startupProfile.isStartupClass(targetClass.getType())) {
-      return false;
-    }
-    return true;
   }
 }

@@ -48,6 +48,7 @@ import com.android.tools.r8.ir.optimize.Inliner.RetryAction;
 import com.android.tools.r8.ir.optimize.inliner.InliningIRProvider;
 import com.android.tools.r8.ir.optimize.inliner.InliningReasonStrategy;
 import com.android.tools.r8.ir.optimize.inliner.WhyAreYouNotInliningReporter;
+import com.android.tools.r8.profile.startup.optimization.StartupBoundaryOptimizationUtils;
 import com.android.tools.r8.shaking.AppInfoWithLiveness;
 import com.android.tools.r8.shaking.AssumeInfoCollection;
 import com.android.tools.r8.shaking.MainDexInfo;
@@ -176,6 +177,11 @@ public final class DefaultInliningOracle implements InliningOracle, InliningStra
       return false;
     }
 
+    if (!StartupBoundaryOptimizationUtils.isSafeForInlining(method, singleTarget, appView)) {
+      whyAreYouNotInliningReporter.reportInliningAcrossStartupBoundary();
+      return false;
+    }
+
     // Abort inlining attempt if method -> target access is not right.
     if (resolutionResult.isAccessibleFrom(method, appView).isPossiblyFalse()) {
       whyAreYouNotInliningReporter.reportInaccessible();
@@ -184,13 +190,11 @@ public final class DefaultInliningOracle implements InliningOracle, InliningStra
 
     // Don't inline code with references beyond root main dex classes into a root main dex class.
     // If we do this it can increase the size of the main dex dependent classes.
-    if (mainDexInfo.disallowInliningIntoContext(
-        appView, method, singleTarget, appView.getSyntheticItems())) {
+    if (mainDexInfo.disallowInliningIntoContext(appView, method, singleTarget)) {
       whyAreYouNotInliningReporter.reportInlineeRefersToClassesNotInMainDex();
       return false;
     }
-    assert !mainDexInfo.disallowInliningIntoContext(
-        appView, method, singleTarget, appView.getSyntheticItems());
+    assert !mainDexInfo.disallowInliningIntoContext(appView, method, singleTarget);
     return true;
   }
 

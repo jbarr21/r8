@@ -39,15 +39,12 @@ import com.android.tools.r8.graph.GenericSignaturePartialTypeArgumentApplier;
 import com.android.tools.r8.graph.MethodAccessFlags;
 import com.android.tools.r8.graph.MethodResolutionResult.SingleResolutionResult;
 import com.android.tools.r8.graph.ProgramMethod;
-import com.android.tools.r8.graph.lens.MethodLookupResult;
-import com.android.tools.r8.ir.code.InvokeType;
 import com.android.tools.r8.ir.optimize.info.OptimizationFeedback;
 import com.android.tools.r8.ir.optimize.info.OptimizationFeedbackSimple;
 import com.android.tools.r8.shaking.AppInfoWithLiveness;
 import com.android.tools.r8.utils.CollectionUtils;
 import com.android.tools.r8.utils.MethodSignatureEquivalence;
 import com.android.tools.r8.utils.ObjectUtils;
-import com.android.tools.r8.utils.collections.MutableBidirectionalManyToOneRepresentativeMap;
 import com.google.common.base.Equivalence;
 import com.google.common.base.Equivalence.Wrapper;
 import com.google.common.collect.Streams;
@@ -79,7 +76,7 @@ class ClassMerger {
   private final VerticalClassMergerGraphLens.Builder deferredRenamings;
   private final DexItemFactory dexItemFactory;
   private final VerticalClassMergerGraphLens.Builder lensBuilder;
-  private final MutableBidirectionalManyToOneRepresentativeMap<DexType, DexType> mergedClasses;
+  private final VerticallyMergedClasses.Builder verticallyMergedClassesBuilder;
 
   private final DexProgramClass source;
   private final DexProgramClass target;
@@ -91,15 +88,14 @@ class ClassMerger {
   ClassMerger(
       AppView<AppInfoWithLiveness> appView,
       VerticalClassMergerGraphLens.Builder lensBuilder,
-      MutableBidirectionalManyToOneRepresentativeMap<DexType, DexType> mergedClasses,
+      VerticallyMergedClasses.Builder verticallyMergedClassesBuilder,
       DexProgramClass source,
       DexProgramClass target) {
-    DexItemFactory dexItemFactory = appView.dexItemFactory();
     this.appView = appView;
-    this.deferredRenamings = new VerticalClassMergerGraphLens.Builder(dexItemFactory);
-    this.dexItemFactory = dexItemFactory;
+    this.deferredRenamings = new VerticalClassMergerGraphLens.Builder();
+    this.dexItemFactory = appView.dexItemFactory();
     this.lensBuilder = lensBuilder;
-    this.mergedClasses = mergedClasses;
+    this.verticallyMergedClassesBuilder = verticallyMergedClassesBuilder;
     this.source = source;
     this.target = target;
   }
@@ -133,7 +129,7 @@ class ClassMerger {
                         availableMethodSignatures.test(candidate)
                             && source.lookupVirtualMethod(candidate) == null);
             add(directMethods, resultingConstructor, MethodSignatureEquivalence.get());
-            blockRedirectionOfSuperCalls(resultingConstructor.getReference());
+            blockRedirectionOfSuperCalls(resultingConstructor);
           } else {
             DexEncodedMethod resultingDirectMethod =
                 renameMethod(
@@ -141,11 +137,8 @@ class ClassMerger {
                     availableMethodSignatures,
                     definition.isClassInitializer() ? Rename.NEVER : Rename.IF_NEEDED);
             add(directMethods, resultingDirectMethod, MethodSignatureEquivalence.get());
-            deferredRenamings.map(
-                directMethod.getReference(), resultingDirectMethod.getReference());
-            deferredRenamings.recordMove(
-                directMethod.getReference(), resultingDirectMethod.getReference());
-            blockRedirectionOfSuperCalls(resultingDirectMethod.getReference());
+            deferredRenamings.recordMove(directMethod.getDefinition(), resultingDirectMethod);
+            blockRedirectionOfSuperCalls(resultingDirectMethod);
 
             // Private methods in the parent class may be targeted with invoke-super if the two
             // classes are in the same nest. Ensure such calls are mapped to invoke-direct.
@@ -153,12 +146,10 @@ class ClassMerger {
                 && definition.isPrivate()
                 && AccessControl.isMemberAccessible(directMethod, source, target, appView)
                     .isTrue()) {
-              deferredRenamings.mapVirtualMethodToDirectInType(
-                  directMethod.getReference(),
-                  prototypeChanges ->
-                      new MethodLookupResult(
-                          resultingDirectMethod.getReference(), null, DIRECT, prototypeChanges),
-                  target.getType());
+              // TODO(b/315283465): Add a test for correct rewriting of invoke-super to nest members
+              //  and determine if we need to record something here or not.
+              // deferredRenamings.mapVirtualMethodToDirectInType(
+              //    directMethod.getReference(), target.getType());
             }
           }
         });
@@ -170,15 +161,12 @@ class ClassMerger {
           // Remove abstract/interface methods that are shadowed. The identity mapping below is
           // needed to ensure we correctly fixup the mapping in case the signature refers to
           // merged classes.
-          deferredRenamings
-              .map(virtualMethod.getReference(), shadowedBy.getReference())
-              .map(shadowedBy.getReference(), shadowedBy.getReference())
-              .recordMerge(virtualMethod.getReference(), shadowedBy.getReference());
+          deferredRenamings.recordSplit(virtualMethod, shadowedBy, null, null);
 
           // The override now corresponds to the method in the parent, so unset its synthetic flag
           // if the method in the parent is not synthetic.
           if (!virtualMethod.isSyntheticMethod() && shadowedBy.isSyntheticMethod()) {
-            shadowedBy.accessFlags.demoteFromSynthetic();
+            shadowedBy.getAccessFlags().demoteFromSynthetic();
           }
           continue;
         }
@@ -204,17 +192,14 @@ class ClassMerger {
           DexEncodedMethod resultingVirtualMethod =
               renameMethod(virtualMethod, availableMethodSignatures, Rename.NEVER);
           resultingVirtualMethod.setLibraryMethodOverride(virtualMethod.isLibraryMethodOverride());
-          deferredRenamings.map(
-              virtualMethod.getReference(), resultingVirtualMethod.getReference());
-          deferredRenamings.recordMove(
-              virtualMethod.getReference(), resultingVirtualMethod.getReference());
+          deferredRenamings.recordMove(virtualMethod, resultingVirtualMethod);
           add(virtualMethods, resultingVirtualMethod, MethodSignatureEquivalence.get());
           continue;
         }
       }
 
       DexEncodedMethod resultingMethod;
-      if (source.accessFlags.isInterface()) {
+      if (source.isInterface()) {
         // Moving a default interface method into its subtype. This method could be hit directly
         // via an invoke-super instruction from any of the transitive subtypes of this interface,
         // due to the way invoke-super works on default interface methods. In order to be able
@@ -233,16 +218,12 @@ class ClassMerger {
                 resultingMethodReference, dexItemFactory);
         makeStatic(resultingMethod);
       } else {
-        // This virtual method could be called directly from a sub class via an invoke-super in-
-        // struction. Therefore, we translate this virtual method into an instance method with a
+        // This virtual method could be called directly from a sub class via an invoke-super
+        // instruction. Therefore, we translate this virtual method into an instance method with a
         // unique name, such that relevant invoke-super instructions can be rewritten to target
         // this method directly.
         resultingMethod = renameMethod(virtualMethod, availableMethodSignatures, Rename.ALWAYS);
-        if (appView.options().getProguardConfiguration().isAccessModificationAllowed()) {
-          makePublic(resultingMethod);
-        } else {
-          makePrivate(resultingMethod);
-        }
+        makePublicFinal(resultingMethod);
       }
 
       add(
@@ -252,18 +233,17 @@ class ClassMerger {
 
       // Record that invoke-super instructions in the target class should be redirected to the
       // newly created direct method.
-      redirectSuperCallsInTarget(virtualMethod, resultingMethod);
-      blockRedirectionOfSuperCalls(resultingMethod.getReference());
+      redirectSuperCallsInTarget(virtualMethod);
 
+      DexEncodedMethod bridge = null;
+      DexEncodedMethod override = shadowedBy;
       if (shadowedBy == null) {
         // In addition to the newly added direct method, create a virtual method such that we do
         // not accidentally remove the method from the interface of this class.
         // Note that this method is added independently of whether it will actually be used. If
         // it turns out that the method is never used, it will be removed by the final round
         // of tree shaking.
-        shadowedBy = buildBridgeMethod(virtualMethod, resultingMethod);
-        deferredRenamings.recordCreationOfBridgeMethod(
-            virtualMethod.getReference(), shadowedBy.getReference());
+        bridge = shadowedBy = buildBridgeMethod(virtualMethod, resultingMethod);
         add(virtualMethods, shadowedBy, MethodSignatureEquivalence.get());
       }
 
@@ -281,9 +261,7 @@ class ClassMerger {
                                   .getMethodInfo(virtualMethod, source)
                                   .joiner())));
 
-      deferredRenamings.map(virtualMethod.getReference(), shadowedBy.getReference());
-      deferredRenamings.recordMove(
-          virtualMethod.getReference(), resultingMethod.getReference(), resultingMethod.isStatic());
+      deferredRenamings.recordSplit(virtualMethod, override, bridge, resultingMethod);
     }
 
     if (abortMerge) {
@@ -365,7 +343,12 @@ class ClassMerger {
     source.getMethodCollection().clearVirtualMethods();
     source.clearInstanceFields();
     source.clearStaticFields();
-    // Step 5: Record merging.
+    // Step 5: Merge attributes.
+    if (source.isNestHost()) {
+      target.clearNestHost();
+      target.setNestMemberAttributes(source.getNestMembersClassAttributes());
+    }
+    // Step 6: Record merging.
     assert !abortMerge;
     assert GenericSignatureCorrectnessHelper.createForVerification(
             appView, GenericSignatureContextBuilder.createForSingleClass(appView, target))
@@ -537,11 +520,9 @@ class ClassMerger {
     return synthesizedBridges;
   }
 
-  private void redirectSuperCallsInTarget(DexEncodedMethod oldTarget, DexEncodedMethod newTarget) {
+  private void redirectSuperCallsInTarget(DexEncodedMethod oldTarget) {
     DexMethod oldTargetReference = oldTarget.getReference();
-    DexMethod newTargetReference = newTarget.getReference();
-    InvokeType newTargetType = newTarget.isNonPrivateVirtualMethod() ? VIRTUAL : DIRECT;
-    if (source.accessFlags.isInterface()) {
+    if (source.isInterface()) {
       // If we merge a default interface method from interface I to its subtype C, then we need
       // to rewrite invocations on the form "invoke-super I.m()" to "invoke-direct C.m$I()".
       //
@@ -550,10 +531,7 @@ class ClassMerger {
       // if I has a supertype J. This is due to the fact that invoke-super instructions that
       // resolve to a method on an interface never hit an implementation below that interface.
       deferredRenamings.mapVirtualMethodToDirectInType(
-          oldTargetReference,
-          prototypeChanges ->
-              new MethodLookupResult(newTargetReference, null, STATIC, prototypeChanges),
-          target.type);
+          oldTargetReference, oldTarget, target.getType());
     } else {
       // If we merge class B into class C, and class C contains an invocation super.m(), then it
       // is insufficient to rewrite "invoke-super B.m()" to "invoke-{direct,virtual} C.m$B()" (the
@@ -564,18 +542,14 @@ class ClassMerger {
       //
       // We handle this by adding a mapping for [target] and all of its supertypes.
       DexProgramClass holder = target;
-      while (holder != null && holder.isProgramClass()) {
+      while (holder != null) {
         DexMethod signatureInHolder = oldTargetReference.withHolder(holder, dexItemFactory);
         // Only rewrite the invoke-super call if it does not lead to a NoSuchMethodError.
         boolean resolutionSucceeds =
-            holder.lookupVirtualMethod(signatureInHolder) != null
-                || appView.appInfo().lookupSuperTarget(signatureInHolder, holder, appView) != null;
+            appView.appInfo().resolveMethodOnClass(holder, signatureInHolder).isSingleResolution();
         if (resolutionSucceeds) {
           deferredRenamings.mapVirtualMethodToDirectInType(
-              signatureInHolder,
-              prototypeChanges ->
-                  new MethodLookupResult(newTargetReference, null, newTargetType, prototypeChanges),
-              target.type);
+              signatureInHolder, oldTarget, target.type);
         } else {
           break;
         }
@@ -585,22 +559,20 @@ class ClassMerger {
         // the code above. However, instructions on the form "invoke-super A.m()" should also be
         // changed into "invoke-direct D.m$C()". This is achieved by also considering the classes
         // that have been merged into [holder].
-        Set<DexType> mergedTypes = mergedClasses.getKeys(holder.getType());
+        Set<DexType> mergedTypes = verticallyMergedClassesBuilder.getSourcesFor(holder);
         for (DexType type : mergedTypes) {
           DexMethod signatureInType = oldTargetReference.withHolder(type, dexItemFactory);
           // Resolution would have succeeded if the method used to be in [type], or if one of
           // its super classes declared the method.
+          // TODO(b/315283244): Should not rely on lens for this. Instead precompute this before
+          //  merging any classes.
           boolean resolutionSucceededBeforeMerge =
               lensBuilder.hasMappingForSignatureInContext(holder, signatureInType)
                   || appView.appInfo().lookupSuperTarget(signatureInHolder, holder, appView)
                       != null;
           if (resolutionSucceededBeforeMerge) {
             deferredRenamings.mapVirtualMethodToDirectInType(
-                signatureInType,
-                prototypeChanges ->
-                    new MethodLookupResult(
-                        newTargetReference, null, newTargetType, prototypeChanges),
-                target.type);
+                signatureInType, oldTarget, target.type);
           }
         }
         holder =
@@ -611,7 +583,7 @@ class ClassMerger {
     }
   }
 
-  private void blockRedirectionOfSuperCalls(DexMethod method) {
+  private void blockRedirectionOfSuperCalls(DexEncodedMethod method) {
     // We are merging a class B into C. The methods from B are being moved into C, and then we
     // subsequently rewrite the invoke-super instructions in C that hit a method in B, such that
     // they use an invoke-direct instruction instead. In this process, we need to avoid rewriting
@@ -644,8 +616,7 @@ class ClassMerger {
         || invocationTarget.isNonStaticPrivateMethod();
     SynthesizedBridgeCode code =
         new SynthesizedBridgeCode(
-            newMethod,
-            invocationTarget.getReference(),
+            method.getReference(),
             invocationTarget.isStatic()
                 ? STATIC
                 : (invocationTarget.isNonPrivateVirtualMethod() ? VIRTUAL : DIRECT),
@@ -722,8 +693,8 @@ class ClassMerger {
     int i = 0;
     for (DexEncodedField field : sourceFields) {
       DexEncodedField resultingField = renameFieldIfNeeded(field, availableFieldSignatures);
-      existingFieldNames.add(resultingField.getReference().name);
-      deferredRenamings.map(field.getReference(), resultingField.getReference());
+      existingFieldNames.add(resultingField.getName());
+      deferredRenamings.recordMove(field, resultingField);
       result[i] = resultingField;
       i++;
     }
@@ -761,8 +732,7 @@ class ClassMerger {
     DexEncodedMethod result =
         method.toTypeSubstitutedMethodAsInlining(newSignature, dexItemFactory);
     result.getMutableOptimizationInfo().markForceInline();
-    deferredRenamings.map(method.getReference(), result.getReference());
-    deferredRenamings.recordMove(method.getReference(), result.getReference());
+    deferredRenamings.recordMove(method, result);
     // Renamed constructors turn into ordinary private functions. They can be private, as
     // they are only references from their direct subclass, which they were merged into.
     result.getAccessFlags().unsetConstructor();
@@ -842,12 +812,13 @@ class ClassMerger {
     accessFlags.setPrivate();
   }
 
-  private static void makePublic(DexEncodedMethod method) {
+  private static void makePublicFinal(DexEncodedMethod method) {
     MethodAccessFlags accessFlags = method.getAccessFlags();
     assert !accessFlags.isAbstract();
     accessFlags.unsetPrivate();
     accessFlags.unsetProtected();
     accessFlags.setPublic();
+    accessFlags.setFinal();
   }
 
   private void makeStatic(DexEncodedMethod method) {

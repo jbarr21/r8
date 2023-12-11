@@ -4,7 +4,9 @@
 package com.android.tools.r8.graph;
 
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Streams;
 import java.util.function.Function;
+import java.util.function.Predicate;
 
 public abstract class DexMember<D extends DexEncodedMember<D, R>, R extends DexMember<D, R>>
     extends DexReference implements NamingLensComparable<R> {
@@ -70,5 +72,11 @@ public abstract class DexMember<D extends DexEncodedMember<D, R>, R extends DexM
     return Iterables.transform(getReferencedTypes(), type -> type.toBaseType(dexItemFactory));
   }
 
-  public abstract DexMember<D, R> withHolder(DexType holder, DexItemFactory dexItemFactory);
+  public boolean verifyReferencedBaseTypesMatches(
+      Predicate<DexType> predicate, DexItemFactory dexItemFactory) {
+    assert Streams.stream(getReferencedBaseTypes(dexItemFactory)).allMatch(predicate);
+    return true;
+  }
+
+  public abstract DexMember<D, R> withHolder(DexReference holder, DexItemFactory dexItemFactory);
 }

@@ -15,8 +15,10 @@ import com.android.tools.r8.graph.MethodResolutionResult.SingleResolutionResult;
 import com.android.tools.r8.graph.lens.DefaultNonIdentityGraphLens;
 import com.android.tools.r8.graph.lens.FieldLookupResult;
 import com.android.tools.r8.graph.lens.GraphLens;
+import com.android.tools.r8.graph.lens.GraphLensUtils;
 import com.android.tools.r8.graph.lens.MethodLookupResult;
 import com.android.tools.r8.graph.lens.NonIdentityGraphLens;
+import java.util.Deque;
 import java.util.IdentityHashMap;
 import java.util.Map;
 
@@ -33,9 +35,9 @@ public class MemberRebindingIdentityLens extends DefaultNonIdentityGraphLens {
   private MemberRebindingIdentityLens(
       Map<DexField, DexField> nonReboundFieldReferenceToDefinitionMap,
       Map<DexMethod, DexMethod> nonReboundMethodReferenceToDefinitionMap,
-      DexItemFactory dexItemFactory,
+      AppView<? extends AppInfoWithClassHierarchy> appView,
       GraphLens previousLens) {
-    super(dexItemFactory, previousLens);
+    super(appView, previousLens);
     this.nonReboundFieldReferenceToDefinitionMap = nonReboundFieldReferenceToDefinitionMap;
     this.nonReboundMethodReferenceToDefinitionMap = nonReboundMethodReferenceToDefinitionMap;
   }
@@ -77,7 +79,7 @@ public class MemberRebindingIdentityLens extends DefaultNonIdentityGraphLens {
   public MethodLookupResult internalDescribeLookupMethod(
       MethodLookupResult previous, DexMethod context, GraphLens codeLens) {
     assert previous.getReboundReference() == null;
-    return MethodLookupResult.builder(this)
+    return MethodLookupResult.builder(this, codeLens)
         .setReference(previous.getReference())
         .setReboundReference(getReboundMethodReference(previous.getReference()))
         .setPrototypeChanges(previous.getPrototypeChanges())
@@ -85,10 +87,9 @@ public class MemberRebindingIdentityLens extends DefaultNonIdentityGraphLens {
         .build();
   }
 
-  @SuppressWarnings("ReferenceEquality")
   private DexMethod getReboundMethodReference(DexMethod method) {
     DexMethod rebound = nonReboundMethodReferenceToDefinitionMap.get(method);
-    assert method != rebound;
+    assert method.isNotIdenticalTo(rebound);
     while (rebound != null) {
       method = rebound;
       rebound = nonReboundMethodReferenceToDefinitionMap.get(method);
@@ -130,20 +131,40 @@ public class MemberRebindingIdentityLens extends DefaultNonIdentityGraphLens {
                   lens.lookupType(
                       nonReboundFieldReference.getHolderType(), appliedMemberRebindingLens),
                   dexItemFactory);
-          builder.recordNonReboundFieldAccess(
-              rewrittenNonReboundFieldReference, rewrittenReboundFieldReference);
+          if (rewrittenNonReboundFieldReference.isNotIdenticalTo(rewrittenReboundFieldReference)) {
+            builder.recordNonReboundFieldAccess(
+                rewrittenNonReboundFieldReference, rewrittenReboundFieldReference);
+          }
         });
+
+    Deque<NonIdentityGraphLens> lenses = GraphLensUtils.extractNonIdentityLenses(lens);
     nonReboundMethodReferenceToDefinitionMap.forEach(
         (nonReboundMethodReference, reboundMethodReference) -> {
-          DexMethod rewrittenReboundMethodReference =
-              lens.getRenamedMethodSignature(reboundMethodReference, appliedMemberRebindingLens);
+          DexMethod rewrittenReboundMethodReference = reboundMethodReference;
+          for (NonIdentityGraphLens currentLens : lenses) {
+            if (currentLens.isVerticalClassMergerLens()) {
+              // The vertical class merger lens maps merged virtual methods to private methods in
+              // the subclass. Invokes to such virtual methods are mapped to the corresponding
+              // virtual method in the subclass.
+              rewrittenReboundMethodReference =
+                  currentLens
+                      .asVerticalClassMergerLens()
+                      .getNextBridgeMethodSignature(rewrittenReboundMethodReference);
+            } else {
+              rewrittenReboundMethodReference =
+                  currentLens.getNextMethodSignature(rewrittenReboundMethodReference);
+            }
+          }
           DexMethod rewrittenNonReboundMethodReference =
               rewrittenReboundMethodReference.withHolder(
                   lens.lookupType(
                       nonReboundMethodReference.getHolderType(), appliedMemberRebindingLens),
                   dexItemFactory);
-          builder.recordNonReboundMethodAccess(
-              rewrittenNonReboundMethodReference, rewrittenReboundMethodReference);
+          if (rewrittenNonReboundMethodReference.isNotIdenticalTo(
+              rewrittenReboundMethodReference)) {
+            builder.recordNonReboundMethodAccess(
+                rewrittenNonReboundMethodReference, rewrittenReboundMethodReference);
+          }
         });
     return builder.build();
   }
@@ -171,11 +192,13 @@ public class MemberRebindingIdentityLens extends DefaultNonIdentityGraphLens {
 
     private void recordNonReboundFieldAccess(
         DexField nonReboundFieldReference, DexField reboundFieldReference) {
+      assert nonReboundFieldReference.isNotIdenticalTo(reboundFieldReference);
       nonReboundFieldReferenceToDefinitionMap.put(nonReboundFieldReference, reboundFieldReference);
     }
 
     private void recordNonReboundMethodAccess(
         DexMethod nonReboundMethodReference, DexMethod reboundMethodReference) {
+      assert nonReboundMethodReference.isNotIdenticalTo(reboundMethodReference);
       nonReboundMethodReferenceToDefinitionMap.put(
           nonReboundMethodReference, reboundMethodReference);
     }
@@ -202,7 +225,7 @@ public class MemberRebindingIdentityLens extends DefaultNonIdentityGraphLens {
       return new MemberRebindingIdentityLens(
           nonReboundFieldReferenceToDefinitionMap,
           nonReboundMethodReferenceToDefinitionMap,
-          appView.dexItemFactory(),
+          appView,
           previousLens);
     }
   }

@@ -6,6 +6,7 @@ package com.android.tools.r8.optimize;
 import static com.android.tools.r8.utils.AndroidApiLevelUtils.isApiSafeForMemberRebinding;
 
 import com.android.tools.r8.androidapi.AndroidApiLevelCompute;
+import com.android.tools.r8.graph.AccessControl;
 import com.android.tools.r8.graph.AppView;
 import com.android.tools.r8.graph.DexClass;
 import com.android.tools.r8.graph.DexClassAndField;
@@ -16,22 +17,17 @@ import com.android.tools.r8.graph.DexField;
 import com.android.tools.r8.graph.DexMethod;
 import com.android.tools.r8.graph.DexProgramClass;
 import com.android.tools.r8.graph.DexType;
-import com.android.tools.r8.graph.FieldAccessInfoCollection;
 import com.android.tools.r8.graph.LibraryMethod;
 import com.android.tools.r8.graph.MethodAccessInfoCollection;
 import com.android.tools.r8.graph.MethodResolutionResult;
 import com.android.tools.r8.graph.MethodResolutionResult.SingleResolutionResult;
 import com.android.tools.r8.graph.ProgramMethod;
-import com.android.tools.r8.graph.UseRegistry;
 import com.android.tools.r8.ir.code.InvokeType;
-import com.android.tools.r8.ir.optimize.Inliner.ConstraintWithTarget;
 import com.android.tools.r8.shaking.AppInfoWithLiveness;
 import com.android.tools.r8.utils.BiForEachable;
 import com.android.tools.r8.utils.InternalOptions;
 import com.android.tools.r8.utils.OptionalBool;
 import com.android.tools.r8.utils.Pair;
-import com.android.tools.r8.utils.SetUtils;
-import com.android.tools.r8.utils.ThreadUtils;
 import com.android.tools.r8.utils.TriConsumer;
 import com.android.tools.r8.utils.collections.ProgramMethodSet;
 import com.google.common.collect.Iterables;
@@ -40,9 +36,7 @@ import java.util.Comparator;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 
@@ -62,10 +56,6 @@ public class MemberRebindingAnalysis {
     this.eventConsumer = MemberRebindingEventConsumer.create(appView);
     this.options = appView.options();
     this.lensBuilder = MemberRebindingLens.builder(appView);
-  }
-
-  private AppView<AppInfoWithLiveness> appView() {
-    return appView;
   }
 
   private DexMethod validMemberRebindingTargetForNonProgramMethod(
@@ -299,8 +289,8 @@ public class MemberRebindingAnalysis {
 
     methodsWithContexts.forEach(
         (method, contexts) -> {
-          MethodResolutionResult resolutionResult = resolver.apply(method);
-          if (!resolutionResult.isSingleResolution()) {
+          SingleResolutionResult<?> resolutionResult = resolver.apply(method).asSingleResolution();
+          if (resolutionResult == null) {
             return;
           }
 
@@ -337,7 +327,7 @@ public class MemberRebindingAnalysis {
               // If the target class is not public but the targeted method is, we might run into
               // visibility problems when rebinding.
               if (contexts.stream()
-                  .anyMatch(context -> mayNeedBridgeForVisibility(context, resolvedMethod))) {
+                  .anyMatch(context -> mayNeedBridgeForVisibility(context, resolutionResult))) {
                 bridgeMethod =
                     insertBridgeForVisibilityIfNeeded(
                         method, resolvedMethod, initialResolutionHolder, addBridge);
@@ -447,23 +437,11 @@ public class MemberRebindingAnalysis {
     return findHolderForInterfaceMethodBridge(superClass.asProgramClass(), iface);
   }
 
-  @SuppressWarnings("ReferenceEquality")
-  private boolean mayNeedBridgeForVisibility(ProgramMethod context, DexClassAndMethod method) {
-    DexType holderType = method.getHolderType();
-    DexClass holder = appView.definitionFor(holderType);
-    if (holder == null) {
-      return false;
-    }
-    ConstraintWithTarget classVisibility =
-        ConstraintWithTarget.deriveConstraint(
-            context, holderType, holder.getAccessFlags(), appView);
-    ConstraintWithTarget methodVisibility =
-        ConstraintWithTarget.deriveConstraint(
-            context, holderType, method.getAccessFlags(), appView);
-    // We may need bridge for visibility if the target class is not visible while the target method
-    // is visible from the calling context.
-    return classVisibility == ConstraintWithTarget.NEVER
-        && methodVisibility != ConstraintWithTarget.NEVER;
+  private boolean mayNeedBridgeForVisibility(
+      ProgramMethod context, SingleResolutionResult<?> resolutionResult) {
+    return resolutionResult.isAccessibleFrom(context, appView).isTrue()
+        && AccessControl.isClassAccessible(resolutionResult.getResolvedHolder(), context, appView)
+            .isPossiblyFalse();
   }
 
   private DexMethod insertBridgeForVisibilityIfNeeded(
@@ -516,141 +494,13 @@ public class MemberRebindingAnalysis {
     return null;
   }
 
-  private void recordNonReboundFieldAccesses(ExecutorService executorService)
-      throws ExecutionException {
-    assert verifyFieldAccessCollectionContainsAllNonReboundFieldReferences(executorService);
-    FieldAccessInfoCollection<?> fieldAccessInfoCollection =
-        appView.appInfo().getFieldAccessInfoCollection();
-    fieldAccessInfoCollection.forEach(lensBuilder::recordNonReboundFieldAccesses);
-  }
-
-  public void run(ExecutorService executorService) throws ExecutionException {
+  public void run() throws ExecutionException {
     AppInfoWithLiveness appInfo = appView.appInfo();
     computeMethodRebinding(appInfo.getMethodAccessInfoCollection());
-    recordNonReboundFieldAccesses(executorService);
     appInfo.getFieldAccessInfoCollection().flattenAccessContexts();
     MemberRebindingLens memberRebindingLens = lensBuilder.build();
     appView.setGraphLens(memberRebindingLens);
     eventConsumer.finished(appView, memberRebindingLens);
     appView.notifyOptimizationFinishedForTesting();
-  }
-
-  @SuppressWarnings("ReferenceEquality")
-  private boolean verifyFieldAccessCollectionContainsAllNonReboundFieldReferences(
-      ExecutorService executorService) throws ExecutionException {
-    Set<DexField> nonReboundFieldReferences = computeNonReboundFieldReferences(executorService);
-    FieldAccessInfoCollection<?> fieldAccessInfoCollection =
-        appView.appInfo().getFieldAccessInfoCollection();
-    fieldAccessInfoCollection.forEach(
-        info -> {
-          DexField reboundFieldReference = info.getField();
-          info.forEachIndirectAccess(
-              nonReboundFieldReference -> {
-                assert reboundFieldReference != nonReboundFieldReference;
-                assert reboundFieldReference
-                    == appView
-                        .appInfo()
-                        .resolveField(nonReboundFieldReference)
-                        .getResolvedFieldReference();
-                nonReboundFieldReferences.remove(nonReboundFieldReference);
-              });
-        });
-    assert nonReboundFieldReferences.isEmpty();
-    return true;
-  }
-
-  private Set<DexField> computeNonReboundFieldReferences(ExecutorService executorService)
-      throws ExecutionException {
-    Set<DexField> nonReboundFieldReferences = SetUtils.newConcurrentHashSet();
-    ThreadUtils.processItems(
-        appView.appInfo()::forEachMethod,
-        method -> {
-          if (method.getDefinition().hasCode()) {
-            method.registerCodeReferences(
-                new UseRegistry<ProgramMethod>(appView, method) {
-
-                  @Override
-                  public void registerInstanceFieldRead(DexField field) {
-                    registerFieldReference(field);
-                  }
-
-                  @Override
-                  public void registerInstanceFieldWrite(DexField field) {
-                    registerFieldReference(field);
-                  }
-
-                  @Override
-                  public void registerStaticFieldRead(DexField field) {
-                    registerFieldReference(field);
-                  }
-
-                  @Override
-                  public void registerStaticFieldWrite(DexField field) {
-                    registerFieldReference(field);
-                  }
-
-                  @SuppressWarnings("ReferenceEquality")
-                  private void registerFieldReference(DexField field) {
-                    appView()
-                        .appInfo()
-                        .resolveField(field)
-                        .forEachSuccessfulFieldResolutionResult(
-                            resolutionResult -> {
-                              if (resolutionResult.getResolvedField().getReference() != field) {
-                                nonReboundFieldReferences.add(field);
-                              }
-                            });
-                  }
-
-                  @Override
-                  public void registerInitClass(DexType type) {
-                    // Intentionally empty.
-                  }
-
-                  @Override
-                  public void registerInvokeDirect(DexMethod method) {
-                    // Intentionally empty.
-                  }
-
-                  @Override
-                  public void registerInvokeInterface(DexMethod method) {
-                    // Intentionally empty.
-                  }
-
-                  @Override
-                  public void registerInvokeStatic(DexMethod method) {
-                    // Intentionally empty.
-                  }
-
-                  @Override
-                  public void registerInvokeSuper(DexMethod method) {
-                    // Intentionally empty.
-                  }
-
-                  @Override
-                  public void registerInvokeVirtual(DexMethod method) {
-                    // Intentionally empty.
-                  }
-
-                  @Override
-                  public void registerNewInstance(DexType type) {
-                    // Intentionally empty.
-                  }
-
-                  @Override
-                  public void registerInstanceOf(DexType type) {
-                    // Intentionally empty.
-                  }
-
-                  @Override
-                  public void registerTypeReference(DexType type) {
-                    // Intentionally empty.
-                  }
-                });
-          }
-        },
-        appView.options().getThreadingModule(),
-        executorService);
-    return nonReboundFieldReferences;
   }
 }
