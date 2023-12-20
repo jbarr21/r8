@@ -182,6 +182,7 @@ public class VerticalClassMerger {
   }
 
   private void run(ExecutorService executorService, Timing timing) throws ExecutionException {
+    appView.appInfo().getMethodAccessInfoCollection().verifyNoNonResolving(appView);
     timing.begin("Setup");
     ImmediateProgramSubtypingInfo immediateSubtypingInfo =
         ImmediateProgramSubtypingInfo.create(appView);
@@ -224,8 +225,7 @@ public class VerticalClassMerger {
     Collection<ConnectedComponentVerticalClassMerger> connectedComponentMergers =
         getConnectedComponentMergers(
             connectedComponents, immediateSubtypingInfo, executorService, timing);
-    return applyConnectedComponentMergers(
-        connectedComponentMergers, immediateSubtypingInfo, executorService, timing);
+    return applyConnectedComponentMergers(connectedComponentMergers, executorService, timing);
   }
 
   private Collection<ConnectedComponentVerticalClassMerger> getConnectedComponentMergers(
@@ -244,8 +244,9 @@ public class VerticalClassMerger {
             connectedComponent -> {
               Timing threadTiming = Timing.create("Compute classes to merge in component", options);
               ConnectedComponentVerticalClassMerger connectedComponentMerger =
-                  new VerticalClassMergerPolicyExecutor(appView, pinnedClasses)
-                      .run(connectedComponent, immediateSubtypingInfo);
+                  new VerticalClassMergerPolicyExecutor(
+                          appView, immediateSubtypingInfo, pinnedClasses)
+                      .run(connectedComponent, executorService, threadTiming);
               if (!connectedComponentMerger.isEmpty()) {
                 synchronized (connectedComponentMergers) {
                   connectedComponentMergers.add(connectedComponentMerger);
@@ -263,7 +264,6 @@ public class VerticalClassMerger {
 
   private VerticalClassMergerResult applyConnectedComponentMergers(
       Collection<ConnectedComponentVerticalClassMerger> connectedComponentMergers,
-      ImmediateProgramSubtypingInfo immediateSubtypingInfo,
       ExecutorService executorService,
       Timing timing)
       throws ExecutionException {
@@ -276,7 +276,7 @@ public class VerticalClassMerger {
             connectedComponentMerger -> {
               Timing threadTiming = Timing.create("Merge classes in component", options);
               VerticalClassMergerResult.Builder verticalClassMergerComponentResult =
-                  connectedComponentMerger.run(immediateSubtypingInfo);
+                  connectedComponentMerger.run();
               verticalClassMergerResult.merge(verticalClassMergerComponentResult);
               threadTiming.end();
               return threadTiming;

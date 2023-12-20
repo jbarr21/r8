@@ -6,6 +6,7 @@ package com.android.tools.r8.utils;
 
 import com.android.tools.r8.naming.ClassNamingForNameMapper.MappedRange;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterables;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -297,14 +298,22 @@ public class ListUtils {
     void accept(T item, int index);
   }
 
+  public static <T> List<T> sort(Iterable<T> items, Comparator<T> comparator, int numberOfItems) {
+    List<T> sorted = new ArrayList<>(numberOfItems);
+    Iterables.addAll(sorted, items);
+    sorted.sort(comparator);
+    return sorted;
+  }
+
   public static <T> List<T> sort(Collection<T> items, Comparator<T> comparator) {
     List<T> sorted = new ArrayList<>(items);
     sorted.sort(comparator);
     return sorted;
   }
 
-  public static <T> void destructiveSort(List<T> items, Comparator<T> comparator) {
+  public static <T> List<T> destructiveSort(List<T> items, Comparator<T> comparator) {
     items.sort(comparator);
+    return items;
   }
 
   // Utility to add a slow verification of a comparator as part of sorting. Note that this
@@ -358,7 +367,13 @@ public class ListUtils {
     return true;
   }
 
-  public static <T> List<T> joinNewArrayList(List<T> one, List<T> other) {
+  public static <T> List<T> concat(List<T> one, List<T> other) {
+    if (one.isEmpty()) {
+      return other;
+    }
+    if (other.isEmpty()) {
+      return one;
+    }
     ArrayList<T> ts = new ArrayList<>(one.size() + other.size());
     ts.addAll(one);
     ts.addAll(other);

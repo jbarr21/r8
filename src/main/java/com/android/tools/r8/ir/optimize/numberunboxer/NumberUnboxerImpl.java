@@ -110,18 +110,20 @@ public class NumberUnboxerImpl extends NumberUnboxer {
     Map<DexMethod, DexMethod> vMethodRepresentative = new IdentityHashMap<>();
     for (List<ProgramMethod> vMethods : componentVirtualMethods.values()) {
       if (vMethods.size() > 1) {
-        if (Iterables.all(vMethods, this::shouldConsiderForUnboxing)) {
+        if (Iterables.all(vMethods, this::shouldConsiderForUnboxing)
+            && Iterables.any(vMethods, m -> !m.getDefinition().isAbstract())) {
           vMethods.sort(Comparator.comparing(DexClassAndMember::getReference));
           ProgramMethod representative = vMethods.get(0);
           for (int i = 1; i < vMethods.size(); i++) {
             vMethodRepresentative.put(
                 vMethods.get(i).getReference(), representative.getReference());
           }
+          candidateBoxingStatus.put(representative.getReference(), UNPROCESSED_CANDIDATE);
         }
       } else {
         assert vMethods.size() == 1;
         ProgramMethod candidate = vMethods.get(0);
-        if (shouldConsiderForUnboxing(candidate)) {
+        if (shouldConsiderForUnboxing(candidate) && !candidate.getDefinition().isAbstract()) {
           candidateBoxingStatus.put(candidate.getReference(), UNPROCESSED_CANDIDATE);
         }
       }
@@ -131,8 +133,7 @@ public class NumberUnboxerImpl extends NumberUnboxer {
 
   private void registerMethodUnboxingStatusIfNeeded(
       ProgramMethod method, ValueBoxingStatus returnStatus, ValueBoxingStatus[] args) {
-    DexMethod representative =
-        virtualMethodsRepresentative.getOrDefault(method.getReference(), method.getReference());
+    DexMethod representative = representative(method.getReference());
     if (args == null && (returnStatus == null || returnStatus.isNotUnboxable())) {
       // Effectively NOT_UNBOXABLE, remove the candidate.
       // TODO(b/307872552): Do we need to remove at the end of the wave for determinism?
@@ -151,6 +152,10 @@ public class NumberUnboxerImpl extends NumberUnboxer {
       // TODO(b/307872552): Do we need to remove at the end of the wave for determinism?
       candidateBoxingStatus.remove(representative);
     }
+  }
+
+  private DexMethod representative(DexMethod method) {
+    return virtualMethodsRepresentative.getOrDefault(method, method);
   }
 
   /**
@@ -260,7 +265,9 @@ public class NumberUnboxerImpl extends NumberUnboxer {
       if (definition.isArgument()) {
         int shift = BooleanUtils.intValue(!context.getDefinition().isStatic());
         return ValueBoxingStatus.with(
-            new MethodArg(definition.asArgument().getIndex() - shift, context.getReference()));
+            new MethodArg(
+                definition.asArgument().getIndex() - shift,
+                representative(context.getReference())));
       }
       if (definition.isInvokeMethod()) {
         if (boxPrimitiveMethod.isIdenticalTo(definition.asInvokeMethod().getInvokedMethod())) {
@@ -279,7 +286,8 @@ public class NumberUnboxerImpl extends NumberUnboxer {
                 .resolveMethodLegacy(invoke.getInvokedMethod(), invoke.getInterfaceBit())
                 .getResolvedProgramMethod();
         if (resolvedMethod != null) {
-          return ValueBoxingStatus.with(new MethodRet(invoke.getInvokedMethod()));
+          return ValueBoxingStatus.with(
+              new MethodRet(representative(resolvedMethod.getReference())));
         }
       }
     }
@@ -346,7 +354,8 @@ public class NumberUnboxerImpl extends NumberUnboxer {
     }
 
     NumberUnboxerLens numberUnboxerLens =
-        new NumberUnboxerTreeFixer(appView, unboxingResult).fixupTree(executorService, timing);
+        new NumberUnboxerTreeFixer(appView, unboxingResult, virtualMethodsRepresentative)
+            .fixupTree(executorService, timing);
     appView.rewriteWithLens(numberUnboxerLens, executorService, timing);
     new NumberUnboxerMethodReprocessingEnqueuer(appView, numberUnboxerLens)
         .enqueueMethodsForReprocessing(postMethodProcessorBuilder, executorService, timing);

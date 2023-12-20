@@ -26,6 +26,7 @@ import com.android.tools.r8.SyntheticInfoConsumer;
 import com.android.tools.r8.Version;
 import com.android.tools.r8.androidapi.ComputedApiLevel;
 import com.android.tools.r8.cf.CfVersion;
+import com.android.tools.r8.classmerging.Policy;
 import com.android.tools.r8.debuginfo.DebugRepresentation;
 import com.android.tools.r8.dex.ApplicationReader.ProgramClassConflictResolver;
 import com.android.tools.r8.dex.Constants;
@@ -50,6 +51,7 @@ import com.android.tools.r8.graph.AppView;
 import com.android.tools.r8.graph.AppView.WholeProgramOptimizations;
 import com.android.tools.r8.graph.DexApplication;
 import com.android.tools.r8.graph.DexClass;
+import com.android.tools.r8.graph.DexClassAndMethod;
 import com.android.tools.r8.graph.DexClasspathClass;
 import com.android.tools.r8.graph.DexEncodedMethod;
 import com.android.tools.r8.graph.DexItem;
@@ -66,7 +68,6 @@ import com.android.tools.r8.graph.bytecodemetadata.BytecodeMetadataProvider;
 import com.android.tools.r8.graph.lens.GraphLens;
 import com.android.tools.r8.horizontalclassmerging.HorizontalClassMerger;
 import com.android.tools.r8.horizontalclassmerging.HorizontallyMergedClasses;
-import com.android.tools.r8.horizontalclassmerging.Policy;
 import com.android.tools.r8.inspector.internal.InspectorImpl;
 import com.android.tools.r8.ir.analysis.proto.ProtoReferences;
 import com.android.tools.r8.ir.analysis.type.TypeElement;
@@ -114,7 +115,6 @@ import com.android.tools.r8.utils.structural.Ordered;
 import com.android.tools.r8.verticalclassmerging.VerticalClassMergerOptions;
 import com.android.tools.r8.verticalclassmerging.VerticallyMergedClasses;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Equivalence.Wrapper;
 import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -2476,9 +2476,6 @@ public class InternalOptions implements GlobalKeepInfoConfiguration {
     // specified.
     public boolean enableD8ResourcesPassThrough = false;
 
-    // TODO(b/144781417): This is disabled by default as some test apps appear to have such classes.
-    public boolean allowNonAbstractClassesWithAbstractMethods = true;
-
     public boolean verifyKeptGraphInfo = false;
 
     public boolean readInputStackMaps = true;
@@ -2502,11 +2499,10 @@ public class InternalOptions implements GlobalKeepInfoConfiguration {
 
       public Comparator<DexMethod> interfaceMethodOrdering = null;
 
-      public Comparator<Wrapper<DexEncodedMethod>> getInterfaceMethodOrderingOrDefault(
-          Comparator<Wrapper<DexEncodedMethod>> comparator) {
+      public Comparator<? super DexClassAndMethod> getInterfaceMethodOrderingOrDefault(
+          Comparator<DexClassAndMethod> comparator) {
         if (interfaceMethodOrdering != null) {
-          return (a, b) ->
-              interfaceMethodOrdering.compare(a.get().getReference(), b.get().getReference());
+          return (a, b) -> interfaceMethodOrdering.compare(a.getReference(), b.getReference());
         }
         return comparator;
       }

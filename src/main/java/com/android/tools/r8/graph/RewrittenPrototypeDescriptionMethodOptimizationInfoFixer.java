@@ -7,8 +7,11 @@ package com.android.tools.r8.graph;
 import com.android.tools.r8.graph.proto.ArgumentInfo;
 import com.android.tools.r8.graph.proto.ArgumentInfoCollection;
 import com.android.tools.r8.graph.proto.RewrittenPrototypeDescription;
+import com.android.tools.r8.graph.proto.RewrittenTypeInfo;
 import com.android.tools.r8.ir.analysis.inlining.SimpleInliningConstraint;
 import com.android.tools.r8.ir.analysis.inlining.SimpleInliningConstraintFactory;
+import com.android.tools.r8.ir.analysis.type.DynamicType;
+import com.android.tools.r8.ir.analysis.value.AbstractValue;
 import com.android.tools.r8.ir.optimize.classinliner.constraint.ClassInlinerMethodConstraint;
 import com.android.tools.r8.ir.optimize.enums.classification.EnumUnboxerMethodClassification;
 import com.android.tools.r8.ir.optimize.info.CallSiteOptimizationInfo;
@@ -155,6 +158,36 @@ public class RewrittenPrototypeDescriptionMethodOptimizationInfoFixer
   @Override
   public BitSet fixupArguments(BitSet arguments) {
     return fixupArgumentInfo(arguments);
+  }
+
+  @Override
+  public DynamicType fixupDynamicType(DynamicType dynamicType) {
+    if (!prototypeChanges.hasRewrittenReturnInfo()) {
+      return dynamicType;
+    }
+    RewrittenTypeInfo rewrittenReturnInfo = prototypeChanges.getRewrittenReturnInfo();
+    if (rewrittenReturnInfo.getNewType().isPrimitiveType()
+        || rewrittenReturnInfo.getNewType().isVoidType()) {
+      return DynamicType.unknown();
+    }
+    return dynamicType;
+  }
+
+  @Override
+  public AbstractValue fixupAbstractReturnValue(
+      AppView<AppInfoWithLiveness> appView, AbstractValue returnValue) {
+    if (!prototypeChanges.hasRewrittenReturnInfo()) {
+      return returnValue;
+    }
+    RewrittenTypeInfo rewrittenReturnInfo = prototypeChanges.getRewrittenReturnInfo();
+    if (rewrittenReturnInfo.getNewType().isPrimitiveType()) {
+      // This covers for number unboxing, however, enum unboxing should never have a single
+      // boxed primitive as return value.
+      if (returnValue.isSingleBoxedPrimitive()) {
+        return returnValue.asSingleBoxedPrimitive().toPrimitive(appView.abstractValueFactory());
+      }
+    }
+    return returnValue;
   }
 
   private BitSet fixupArgumentInfo(BitSet bitSet) {
