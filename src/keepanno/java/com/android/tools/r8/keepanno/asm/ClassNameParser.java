@@ -7,30 +7,69 @@ package com.android.tools.r8.keepanno.asm;
 import com.android.tools.r8.keepanno.asm.ClassNameParser.ClassNameProperty;
 import com.android.tools.r8.keepanno.asm.ClassSimpleNameParser.ClassSimpleNameProperty;
 import com.android.tools.r8.keepanno.asm.PackageNameParser.PackageNameProperty;
+import com.android.tools.r8.keepanno.asm.TypeParser.TypeProperty;
 import com.android.tools.r8.keepanno.ast.AnnotationConstants.ClassNamePattern;
 import com.android.tools.r8.keepanno.ast.KeepPackagePattern;
 import com.android.tools.r8.keepanno.ast.KeepQualifiedClassNamePattern;
+import com.android.tools.r8.keepanno.ast.KeepTypePattern;
 import com.android.tools.r8.keepanno.ast.KeepUnqualfiedClassNamePattern;
 import com.android.tools.r8.keepanno.ast.ParsingContext;
 import com.android.tools.r8.keepanno.ast.ParsingContext.AnnotationParsingContext;
+import com.android.tools.r8.keepanno.ast.ParsingContext.PropertyParsingContext;
 import com.google.common.collect.ImmutableList;
 import java.util.function.Consumer;
 import org.objectweb.asm.AnnotationVisitor;
 
 public class ClassNameParser
-    extends PropertyParserBase<KeepQualifiedClassNamePattern, ClassNameProperty, ClassNameParser> {
+    extends PropertyParserBase<KeepQualifiedClassNamePattern, ClassNameProperty> {
 
   public ClassNameParser(ParsingContext parsingContext) {
     super(parsingContext);
   }
 
   public enum ClassNameProperty {
-    PATTERN
+    PATTERN,
+    NAME,
+    CONSTANT,
   }
 
   @Override
-  public ClassNameParser self() {
-    return this;
+  boolean tryProperty(
+      ClassNameProperty property,
+      String name,
+      Object value,
+      Consumer<KeepQualifiedClassNamePattern> setValue) {
+    switch (property) {
+      case NAME:
+        return new TypeParser(getParsingContext())
+            .tryProperty(
+                TypeProperty.TYPE_NAME,
+                name,
+                value,
+                type -> setValue.accept(typeToClassType(type, getParsingContext().property(name))));
+      case CONSTANT:
+        return new TypeParser(getParsingContext())
+            .tryProperty(
+                TypeProperty.TYPE_CONSTANT,
+                name,
+                value,
+                type -> setValue.accept(typeToClassType(type, getParsingContext().property(name))));
+      default:
+        return false;
+    }
+  }
+
+  KeepQualifiedClassNamePattern typeToClassType(
+      KeepTypePattern typePattern, PropertyParsingContext parsingContext) {
+    return typePattern.match(
+        KeepQualifiedClassNamePattern::any,
+        primitiveTypePattern -> {
+          throw parsingContext.error("Invalid use of primitive type where class type was expected");
+        },
+        arrayTypePattern -> {
+          throw parsingContext.error("Invalid use of array type where class type was expected");
+        },
+        classNamePattern -> classNamePattern);
   }
 
   @Override
@@ -43,13 +82,11 @@ public class ClassNameParser
       case PATTERN:
         {
           AnnotationParsingContext parsingContext =
-              new AnnotationParsingContext(getParsingContext(), descriptor);
-          PackageNameParser packageParser =
-              new PackageNameParser(parsingContext)
-                  .setProperty(PackageNameProperty.NAME, ClassNamePattern.packageName);
-          ClassSimpleNameParser nameParser =
-              new ClassSimpleNameParser(parsingContext)
-                  .setProperty(ClassSimpleNameProperty.NAME, ClassNamePattern.simpleName);
+              getParsingContext().property(name).annotation(descriptor);
+          PackageNameParser packageParser = new PackageNameParser(parsingContext);
+          ClassSimpleNameParser nameParser = new ClassSimpleNameParser(parsingContext);
+          packageParser.setProperty(ClassNamePattern.packageName, PackageNameProperty.NAME);
+          nameParser.setProperty(ClassNamePattern.simpleName, ClassSimpleNameProperty.NAME);
           return new ParserVisitor(
               parsingContext,
               descriptor,

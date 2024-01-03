@@ -14,10 +14,11 @@ import com.android.tools.r8.TestParametersCollection;
 import com.android.tools.r8.ToolHelper;
 import com.android.tools.r8.keepanno.annotations.KeepOption;
 import com.android.tools.r8.keepanno.annotations.KeepTarget;
+import com.android.tools.r8.keepanno.annotations.StringPattern;
 import com.android.tools.r8.keepanno.annotations.UsesReflection;
 import com.android.tools.r8.keepanno.asm.KeepEdgeReader;
+import com.android.tools.r8.keepanno.ast.KeepAnnotationParserException;
 import com.android.tools.r8.keepanno.ast.KeepDeclaration;
-import com.android.tools.r8.keepanno.ast.KeepEdgeException;
 import com.android.tools.r8.keepanno.keeprules.KeepRuleExtractor;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -52,7 +53,7 @@ public class KeepInvalidTargetTest extends TestBase {
   private void assertThrowsWith(ThrowingRunnable fn, Matcher<String> matcher) {
     try {
       fn.run();
-    } catch (KeepEdgeException e) {
+    } catch (KeepAnnotationParserException e) {
       assertThat(e.getMessage(), matcher);
       return;
     } catch (Throwable e) {
@@ -66,9 +67,10 @@ public class KeepInvalidTargetTest extends TestBase {
     assertThrowsWith(
         () -> extractRuleForClass(MultipleClassDeclarations.class),
         allOf(
-            containsString("Multiple declarations"),
+            containsString("Multiple properties"),
             containsString("className"),
-            containsString("classConstant")));
+            containsString("classConstant"),
+            containsString("at property-group: class-name")));
   }
 
   static class MultipleClassDeclarations {
@@ -83,13 +85,15 @@ public class KeepInvalidTargetTest extends TestBase {
   public void testInvalidClassDeclWithBinding() {
     assertThrowsWith(
         () -> extractRuleForClass(BindingAndClassDeclarations.class),
-        allOf(containsString("class binding"), containsString("class patterns")));
+        allOf(
+            containsString("class binding"),
+            containsString("class patterns"),
+            containsString("at property-group: class")));
   }
 
   static class BindingAndClassDeclarations {
 
-    // Both properties are using the "default" value of an empty string, but should still fail.
-    @UsesReflection({@KeepTarget(classFromBinding = "", className = "")})
+    @UsesReflection({@KeepTarget(classFromBinding = "BINDING", className = "CLASS")})
     public static void main(String[] args) {
       System.out.println("Hello, world");
     }
@@ -100,9 +104,12 @@ public class KeepInvalidTargetTest extends TestBase {
     assertThrowsWith(
         () -> extractRuleForClass(MultipleExtendsDeclarations.class),
         allOf(
-            containsString("Multiple declarations"),
+            containsString("Multiple properties"),
             containsString("extendsClassName"),
-            containsString("extendsClassConstant")));
+            containsString("extendsClassConstant"),
+            containsString("at property-group: instance-of"),
+            containsString("at annotation: @UsesReflection"),
+            containsString("at method: void main")));
   }
 
   static class MultipleExtendsDeclarations {
@@ -120,7 +127,10 @@ public class KeepInvalidTargetTest extends TestBase {
   public void testInvalidMemberDecl() {
     assertThrowsWith(
         () -> extractRuleForClass(MultipleMemberDeclarations.class),
-        allOf(containsString("field"), containsString("method")));
+        allOf(
+            containsString("field"),
+            containsString("method"),
+            containsString("at property-group: member")));
   }
 
   static class MultipleMemberDeclarations {
@@ -135,7 +145,11 @@ public class KeepInvalidTargetTest extends TestBase {
   public void testInvalidOptionsDecl() {
     assertThrowsWith(
         () -> extractRuleForClass(MultipleOptionDeclarations.class),
-        allOf(containsString("options"), containsString("allow"), containsString("disallow")));
+        allOf(
+            containsString("Multiple properties"),
+            containsString("allow"),
+            containsString("disallow"),
+            containsString("at property-group: constraints")));
   }
 
   static class MultipleOptionDeclarations {
@@ -145,6 +159,28 @@ public class KeepInvalidTargetTest extends TestBase {
             classConstant = A.class,
             allow = {KeepOption.OPTIMIZATION},
             disallow = {KeepOption.SHRINKING}))
+    public static void main(String[] args) {
+      System.out.println("Hello, world");
+    }
+  }
+
+  @Test
+  public void testStringPattern() {
+    assertThrowsWith(
+        () -> extractRuleForClass(StringPatternWithExactAndPrefix.class),
+        allOf(
+            containsString("Cannot specify both"),
+            containsString("exact"),
+            containsString("prefix"),
+            containsString("at property: methodNamePattern")));
+  }
+
+  static class StringPatternWithExactAndPrefix {
+
+    @UsesReflection(
+        @KeepTarget(
+            classConstant = A.class,
+            methodNamePattern = @StringPattern(exact = "foo", startsWith = "f")))
     public static void main(String[] args) {
       System.out.println("Hello, world");
     }

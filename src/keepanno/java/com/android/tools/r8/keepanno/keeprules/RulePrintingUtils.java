@@ -4,6 +4,7 @@
 package com.android.tools.r8.keepanno.keeprules;
 
 import com.android.tools.r8.keepanno.ast.AccessVisibility;
+import com.android.tools.r8.keepanno.ast.KeepArrayTypePattern;
 import com.android.tools.r8.keepanno.ast.KeepClassItemPattern;
 import com.android.tools.r8.keepanno.ast.KeepEdgeException;
 import com.android.tools.r8.keepanno.ast.KeepEdgeMetaInfo;
@@ -21,7 +22,9 @@ import com.android.tools.r8.keepanno.ast.KeepMethodReturnTypePattern;
 import com.android.tools.r8.keepanno.ast.KeepOptions;
 import com.android.tools.r8.keepanno.ast.KeepOptions.KeepOption;
 import com.android.tools.r8.keepanno.ast.KeepPackagePattern;
+import com.android.tools.r8.keepanno.ast.KeepPrimitiveTypePattern;
 import com.android.tools.r8.keepanno.ast.KeepQualifiedClassNamePattern;
+import com.android.tools.r8.keepanno.ast.KeepStringPattern;
 import com.android.tools.r8.keepanno.ast.KeepTypePattern;
 import com.android.tools.r8.keepanno.ast.KeepUnqualfiedClassNamePattern;
 import com.android.tools.r8.keepanno.ast.ModifierPattern;
@@ -158,6 +161,20 @@ public abstract class RulePrintingUtils {
     return builder.append(")");
   }
 
+  private static RulePrinter printStringPattern(RulePrinter printer, KeepStringPattern pattern) {
+    if (pattern.isExact()) {
+      return printer.append(pattern.asExactString());
+    }
+    if (pattern.hasPrefix()) {
+      printer.append(pattern.getPrefixString());
+    }
+    printer.appendStar();
+    if (pattern.hasSuffix()) {
+      printer.append(pattern.getSuffixString());
+    }
+    return printer;
+  }
+
   private static RulePrinter printFieldName(RulePrinter builder, KeepFieldNamePattern namePattern) {
     return namePattern.isAny()
         ? builder.appendStar()
@@ -166,9 +183,7 @@ public abstract class RulePrintingUtils {
 
   private static RulePrinter printMethodName(
       RulePrinter builder, KeepMethodNamePattern namePattern) {
-    return namePattern.isAny()
-        ? builder.appendStar()
-        : builder.append(namePattern.asExact().getName());
+    return printStringPattern(builder, namePattern.asStringPattern());
   }
 
   private static RulePrinter printReturnType(
@@ -179,11 +194,34 @@ public abstract class RulePrintingUtils {
     return printType(builder, returnTypePattern.asType());
   }
 
-  private static RulePrinter printType(RulePrinter builder, KeepTypePattern typePattern) {
-    if (typePattern.isAny()) {
-      return builder.appendTripleStar();
+  private static RulePrinter printType(RulePrinter printer, KeepTypePattern typePattern) {
+    return typePattern.match(
+        printer::appendTripleStar,
+        primitivePattern -> printPrimitiveType(printer, primitivePattern),
+        arrayTypePattern -> printArrayType(printer, arrayTypePattern),
+        classTypePattern -> printClassName(classTypePattern, printer));
+  }
+
+  private static RulePrinter printPrimitiveType(
+      RulePrinter printer, KeepPrimitiveTypePattern primitiveTypePattern) {
+    if (primitiveTypePattern.isAny()) {
+      // Matching any primitive type uses the wildcard syntax `%`
+      return printer.appendPercent();
     }
-    return builder.append(descriptorToJavaType(typePattern.getDescriptor()));
+    return printer.append(descriptorToJavaType(primitiveTypePattern.getDescriptor()));
+  }
+
+  private static RulePrinter printArrayType(
+      RulePrinter printer, KeepArrayTypePattern arrayTypePattern) {
+    // The "any" array is simply dimension one of any type. Just assert that to be true as the
+    // general case will emit the correct syntax: ***[]
+    assert !arrayTypePattern.isAny()
+        || (arrayTypePattern.getDimensions() == 1 && arrayTypePattern.getBaseType().isAny());
+    printType(printer, arrayTypePattern.getBaseType());
+    for (int i = 0; i < arrayTypePattern.getDimensions(); i++) {
+      printer.append("[]");
+    }
+    return printer;
   }
 
   public static RulePrinter printMemberAccess(
@@ -254,7 +292,7 @@ public abstract class RulePrintingUtils {
   public static RulePrinter printClassName(
       KeepQualifiedClassNamePattern classNamePattern, RulePrinter printer) {
     if (classNamePattern.isAny()) {
-      return printer.appendStar();
+      return printer.appendDoubleStar();
     }
     printPackagePrefix(classNamePattern.getPackagePattern(), printer);
     return printSimpleClassName(classNamePattern.getNamePattern(), printer);

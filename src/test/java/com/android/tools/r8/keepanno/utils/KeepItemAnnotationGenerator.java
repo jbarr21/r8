@@ -21,6 +21,7 @@ import com.android.tools.r8.keepanno.annotations.KeepOption;
 import com.android.tools.r8.keepanno.annotations.KeepTarget;
 import com.android.tools.r8.keepanno.annotations.MemberAccessFlags;
 import com.android.tools.r8.keepanno.annotations.MethodAccessFlags;
+import com.android.tools.r8.keepanno.annotations.StringPattern;
 import com.android.tools.r8.keepanno.annotations.TypePattern;
 import com.android.tools.r8.keepanno.annotations.UsedByNative;
 import com.android.tools.r8.keepanno.annotations.UsedByReflection;
@@ -53,6 +54,8 @@ public class KeepItemAnnotationGenerator {
     Generator.run();
   }
 
+  private static final String DEFAULT_INVALID_STRING_PATTERN =
+      "@" + simpleName(StringPattern.class) + "(exact = \"\")";
   private static final String DEFAULT_INVALID_TYPE_PATTERN =
       "@" + simpleName(TypePattern.class) + "(name = \"\")";
   private static final String DEFAULT_INVALID_CLASS_NAME_PATTERN =
@@ -151,8 +154,15 @@ public class KeepItemAnnotationGenerator {
     final List<String> footers = new ArrayList<>();
     final LinkedHashMap<String, Group> mutuallyExclusiveGroups = new LinkedHashMap<>();
 
+    boolean mutuallyExclusiveWithOtherGroups = false;
+
     private Group(String name) {
       this.name = name;
+    }
+
+    Group allowMutuallyExclusiveWithOtherGroups() {
+      mutuallyExclusiveWithOtherGroups = true;
+      return this;
     }
 
     Group addMember(GroupMember member) {
@@ -199,6 +209,18 @@ public class KeepItemAnnotationGenerator {
     }
 
     void generateConstants(Generator generator) {
+      if (mutuallyExclusiveWithOtherGroups || members.size() > 1) {
+        StringBuilder camelCaseName = new StringBuilder();
+        for (int i = 0; i < name.length(); i++) {
+          char c = name.charAt(i);
+          if (c == '-') {
+            c = Character.toUpperCase(name.charAt(++i));
+          }
+          camelCaseName.append(c);
+        }
+        generator.println(
+            "public static final String " + camelCaseName + "Group = " + quote(name) + ";");
+      }
       for (GroupMember member : members) {
         member.generateConstants(generator);
       }
@@ -206,6 +228,7 @@ public class KeepItemAnnotationGenerator {
 
     public void addMutuallyExclusiveGroups(Group... groups) {
       for (Group group : groups) {
+        assert mutuallyExclusiveWithOtherGroups || group.mutuallyExclusiveWithOtherGroups;
         mutuallyExclusiveGroups.computeIfAbsent(
             group.name,
             k -> {
@@ -339,6 +362,38 @@ public class KeepItemAnnotationGenerator {
                       "List of additional target consequences. "
                           + "Defaults to no additional target consequences.")
                   .defaultArrayEmpty(KeepTarget.class));
+    }
+
+    private Group stringPatternExactGroup() {
+      return new Group("string-exact-pattern")
+          .allowMutuallyExclusiveWithOtherGroups()
+          .addMember(
+              new GroupMember("exact")
+                  .setDocTitle("Exact string content.")
+                  .addParagraph("For example, {@code \"foo\"} or {@code \"java.lang.String\"}.")
+                  .defaultEmptyString());
+    }
+
+    private Group stringPatternPrefixGroup() {
+      return new Group("string-prefix-pattern")
+          .addMember(
+              new GroupMember("startsWith")
+                  .setDocTitle("Matches strings beginning with the given prefix.")
+                  .addParagraph(
+                      "For example, {@code \"get\"} to match strings such as {@code"
+                          + " \"getMyValue\"}.")
+                  .defaultEmptyString());
+    }
+
+    private Group stringPatternSuffixGroup() {
+      return new Group("string-suffix-pattern")
+          .addMember(
+              new GroupMember("endsWith")
+                  .setDocTitle("Matches strings ending with the given suffix.")
+                  .addParagraph(
+                      "For example, {@code \"Setter\"} to match strings such as {@code"
+                          + " \"myValueSetter\"}.")
+                  .defaultEmptyString());
     }
 
     private Group typePatternGroup() {
@@ -502,6 +557,7 @@ public class KeepItemAnnotationGenerator {
 
     private Group createClassBindingGroup() {
       return new Group(CLASS_GROUP)
+          .allowMutuallyExclusiveWithOtherGroups()
           .addMember(classFromBinding())
           .addDocFooterParagraph("If none are specified the default is to match any class.");
     }
@@ -627,6 +683,7 @@ public class KeepItemAnnotationGenerator {
 
     private Group createMemberBindingGroup() {
       return new Group("member")
+          .allowMutuallyExclusiveWithOtherGroups()
           .addMember(
               new GroupMember("memberFromBinding")
                   .setDocTitle("Define the member pattern in full by a reference to a binding.")
@@ -689,7 +746,14 @@ public class KeepItemAnnotationGenerator {
                   .addParagraph(getMutuallyExclusiveForMethodProperties())
                   .addParagraph(getMethodDefaultDoc("any method name"))
                   .setDocReturn("The exact method name of the method.")
-                  .defaultEmptyString());
+                  .defaultEmptyString())
+          .addMember(
+              new GroupMember("methodNamePattern")
+                  .setDocTitle("Define the method-name pattern by a string pattern.")
+                  .addParagraph(getMutuallyExclusiveForMethodProperties())
+                  .addParagraph(getMethodDefaultDoc("any method name"))
+                  .setDocReturn("The string pattern of the method name.")
+                  .defaultValue(StringPattern.class, DEFAULT_INVALID_STRING_PATTERN));
     }
 
     private Group createMethodReturnTypeGroup() {
@@ -810,36 +874,77 @@ public class KeepItemAnnotationGenerator {
       }
 
       // Member binding properties.
+      Group memberBindingGroup = null;
       if (includeMemberBinding) {
-        createMemberBindingGroup().generate(this);
+        memberBindingGroup = createMemberBindingGroup();
+        memberBindingGroup.generate(this);
         println();
       }
 
       // The remaining member properties.
-      generateMemberPropertiesNoBinding();
+      internalGenerateMemberPropertiesNoBinding(memberBindingGroup);
+    }
+
+    private Group maybeLink(Group group, Group maybeExclusiveGroup) {
+      if (maybeExclusiveGroup != null) {
+        maybeExclusiveGroup.addMutuallyExclusiveGroups(group);
+      }
+      return group;
     }
 
     private void generateMemberPropertiesNoBinding() {
+      internalGenerateMemberPropertiesNoBinding(null);
+    }
+
+    private void internalGenerateMemberPropertiesNoBinding(Group memberBindingGroup) {
       // General member properties.
-      createMemberAccessGroup().generate(this);
+      maybeLink(createMemberAccessGroup(), memberBindingGroup).generate(this);
       println();
 
       // Method properties.
-      createMethodAccessGroup().generate(this);
+      maybeLink(createMethodAccessGroup(), memberBindingGroup).generate(this);
       println();
-      createMethodNameGroup().generate(this);
+      maybeLink(createMethodNameGroup(), memberBindingGroup).generate(this);
       println();
-      createMethodReturnTypeGroup().generate(this);
+      maybeLink(createMethodReturnTypeGroup(), memberBindingGroup).generate(this);
       println();
-      createMethodParametersGroup().generate(this);
+      maybeLink(createMethodParametersGroup(), memberBindingGroup).generate(this);
       println();
 
       // Field properties.
-      createFieldAccessGroup().generate(this);
+      maybeLink(createFieldAccessGroup(), memberBindingGroup).generate(this);
       println();
-      createFieldNameGroup().generate(this);
+      maybeLink(createFieldNameGroup(), memberBindingGroup).generate(this);
       println();
-      createFieldTypeGroup().generate(this);
+      maybeLink(createFieldTypeGroup(), memberBindingGroup).generate(this);
+    }
+
+    private void generateStringPattern() {
+      printCopyRight(2024);
+      printPackage("annotations");
+      printImports(ANNOTATION_IMPORTS);
+      DocPrinter.printer()
+          .setDocTitle("A pattern structure for matching strings.")
+          .addParagraph("If no properties are set, the default pattern matches any string.")
+          .printDoc(this::println);
+      println("@Target(ElementType.ANNOTATION_TYPE)");
+      println("@Retention(RetentionPolicy.CLASS)");
+      println("public @interface " + simpleName(StringPattern.class) + " {");
+      println();
+      withIndent(
+          () -> {
+            Group exactGroup = stringPatternExactGroup();
+            Group prefixGroup = stringPatternPrefixGroup();
+            Group suffixGroup = stringPatternSuffixGroup();
+            exactGroup.addMutuallyExclusiveGroups(prefixGroup, suffixGroup);
+            exactGroup.generate(this);
+            println();
+            prefixGroup.generate(this);
+            println();
+            suffixGroup.generate(this);
+          });
+      println();
+      println("}");
     }
 
     private void generateTypePattern() {
@@ -1213,6 +1318,7 @@ public class KeepItemAnnotationGenerator {
             generateMethodAccessConstants();
             generateFieldAccessConstants();
 
+            generateStringPatternConstants();
             generateTypePatternConstants();
             generateClassNamePatternConstants();
           });
@@ -1482,6 +1588,19 @@ public class KeepItemAnnotationGenerator {
       println();
     }
 
+    private void generateStringPatternConstants() {
+      println("public static final class StringPattern {");
+      withIndent(
+          () -> {
+            generateAnnotationConstants(StringPattern.class);
+            stringPatternExactGroup().generateConstants(this);
+            stringPatternPrefixGroup().generateConstants(this);
+            stringPatternSuffixGroup().generateConstants(this);
+          });
+      println("}");
+      println();
+    }
+
     private void generateTypePatternConstants() {
       println("public static final class TypePattern {");
       withIndent(
@@ -1530,6 +1649,7 @@ public class KeepItemAnnotationGenerator {
       writeFile(source(astPkg, AnnotationConstants.class), Generator::generateConstants);
 
       Path annoPkg = Paths.get("src/keepanno/java/com/android/tools/r8/keepanno/annotations");
+      writeFile(source(annoPkg, StringPattern.class), Generator::generateStringPattern);
       writeFile(source(annoPkg, TypePattern.class), Generator::generateTypePattern);
       writeFile(source(annoPkg, ClassNamePattern.class), Generator::generateClassNamePattern);
       writeFile(source(annoPkg, KeepBinding.class), Generator::generateKeepBinding);
