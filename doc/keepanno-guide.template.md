@@ -86,12 +86,43 @@ of such use cases are detailed below.
 
 ## [Annotating code used by reflection (or via JNI)](used-by-reflection)
 
-TODO
+Sometimes reflecting code cannot be annotated. For example, the reflection can
+be done in native code or in a library outside your control. In such cases you
+can annotate the code that is being used by reflection with either
+`@UsedByReflection` or `@UsedByNative`. These two annotations are equivalent.
+Use the one that best matches why the annotation is needed.
+
+Let's consider some code with reflection outside our control.
+[[[INCLUDE DOC:UsedByReflectionFieldPrinterOnFields]]]
+
+[[[INCLUDE CODE:UsedByReflectionFieldPrinterOnFields]]]
+
+[[[INCLUDE DOC:UsedByReflectionFieldPrinterOnClass]]]
+
+[[[INCLUDE CODE:UsedByReflectionFieldPrinterOnClass]]]
+
+[[[INCLUDE DOC:UsedByReflectionFieldPrinterConditional]]]
+
+[[[INCLUDE CODE:UsedByReflectionFieldPrinterConditional]]]
 
 
 ## [Annotating APIs](apis)
 
-TODO
+If your code is being shrunk before release as a library, or if you have an API
+surface that is used via dynamic loading at runtime, then you need to keep the
+API surface. For that you should use the `@KeepForApi` annotation.
+
+[[[INCLUDE DOC:ApiClass]]]
+
+[[[INCLUDE CODE:ApiClass]]]
+
+[[[INCLUDE DOC:ApiClassMemberAccess]]]
+
+[[[INCLUDE CODE:ApiClassMemberAccess]]]
+
+[[[INCLUDE DOC:ApiMember]]]
+
+[[[INCLUDE CODE:ApiMember]]]
 
 
 ## [Migrating rules to annotations](migrating-rules)

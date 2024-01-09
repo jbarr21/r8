@@ -1,4 +1,4 @@
-// Copyright (c) 2023, the R8 project authors. Please see the AUTHORS file
+// Copyright (c) 2024, the R8 project authors. Please see the AUTHORS file
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
@@ -10,12 +10,11 @@ import com.android.tools.r8.CompilationMode;
 import com.android.tools.r8.NeverInline;
 import com.android.tools.r8.TestBase;
 import com.android.tools.r8.TestParameters;
-import com.android.tools.r8.utils.AndroidApiLevel;
+import com.android.tools.r8.rewrite.arrays.ConstClassArrayWithUniqueValuesTest.TestClass;
 import com.android.tools.r8.utils.StringUtils;
 import com.android.tools.r8.utils.codeinspector.CodeInspector;
 import com.android.tools.r8.utils.codeinspector.InstructionSubject;
 import com.android.tools.r8.utils.codeinspector.MethodSubject;
-import java.util.Iterator;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -23,7 +22,7 @@ import org.junit.runners.Parameterized.Parameter;
 import org.junit.runners.Parameterized.Parameters;
 
 @RunWith(Parameterized.class)
-public class ConstClassArrayTest extends TestBase {
+public class ArrayOfConstClassArraysTest extends TestBase {
 
   @Parameter(0)
   public TestParameters parameters;
@@ -34,52 +33,39 @@ public class ConstClassArrayTest extends TestBase {
   @Parameters(name = "{0}, mode = {1}")
   public static Iterable<?> data() {
     return buildParameters(
-        getTestParameters().withDefaultCfRuntime().withDexRuntimesAndAllApiLevels().build(),
+        getTestParameters()
+            .withDefaultCfRuntime()
+            .withDexRuntimesAndAllApiLevels()
+            .withAllApiLevelsAlsoForCf()
+            .build(),
         CompilationMode.values());
   }
 
   private static final String EXPECTED_OUTPUT =
-      StringUtils.lines("[A, B, C, D, E]", "[E, D, C, B, A]");
+      StringUtils.lines(
+          "[[A, B], [C, D], [E, F, G], [H, I, J]]", "[[J, I, H], [G, F, E], [D, C], [B, A]]");
 
-  private enum State {
-    EXPECTING_CONSTCLASS,
-    EXPECTING_APUTOBJECT
-  }
+  private void inspect(MethodSubject method, int dexFilledNewArray, int cfMaxLocals) {
+    if (canUseFilledNewArrayOfNonStringObjects(parameters)) {
+      assertEquals(
+          dexFilledNewArray,
+          method.streamInstructions().filter(InstructionSubject::isFilledNewArray).count());
 
-  private void inspect(MethodSubject method, boolean insideCatchHandler) {
-    boolean expectingFilledNewArray =
-        canUseFilledNewArrayOfNonStringObjects(parameters) && !insideCatchHandler;
-    assertEquals(
-        expectingFilledNewArray ? 0 : 5,
-        method.streamInstructions().filter(InstructionSubject::isArrayPut).count());
-    assertEquals(
-        expectingFilledNewArray ? 1 : 0,
-        method.streamInstructions().filter(InstructionSubject::isFilledNewArray).count());
-    if (!expectingFilledNewArray) {
-      // Test that const-class and aput instructions are interleaved by the lowering of
-      // filled-new-array.
-      int aputCount = 0;
-      State state = State.EXPECTING_CONSTCLASS;
-      Iterator<InstructionSubject> iterator = method.iterateInstructions();
-      while (iterator.hasNext()) {
-        InstructionSubject instruction = iterator.next();
-        if (instruction.isConstClass()) {
-          assertEquals(State.EXPECTING_CONSTCLASS, state);
-          state = State.EXPECTING_APUTOBJECT;
-        } else if (instruction.isArrayPut()) {
-          assertEquals(State.EXPECTING_APUTOBJECT, state);
-          aputCount++;
-          state = State.EXPECTING_CONSTCLASS;
-        }
+    } else {
+      assertEquals(
+          0, method.streamInstructions().filter(InstructionSubject::isFilledNewArray).count());
+      if (parameters.isCfRuntime()) {
+        assertEquals(cfMaxLocals, method.getMethod().getCode().asCfCode().getMaxLocals());
       }
-      assertEquals(State.EXPECTING_CONSTCLASS, state);
-      assertEquals(5, aputCount);
     }
   }
 
   private void inspect(CodeInspector inspector) {
-    inspect(inspector.clazz(TestClass.class).uniqueMethodWithOriginalName("m1"), false);
-    inspect(inspector.clazz(TestClass.class).uniqueMethodWithOriginalName("m2"), true);
+    inspect(inspector.clazz(TestClass.class).uniqueMethodWithOriginalName("m1"), 5, 1);
+    inspect(
+        inspector.clazz(TestClass.class).uniqueMethodWithOriginalName("m2"),
+        0,
+        compilationMode.isDebug() ? 1 : 2);
   }
 
   @Test
@@ -88,6 +74,7 @@ public class ConstClassArrayTest extends TestBase {
     testForD8(parameters.getBackend())
         .addInnerClasses(getClass())
         .setMinApi(parameters)
+        .setMode(compilationMode)
         .run(parameters.getRuntime(), TestClass.class)
         .inspect(this::inspect)
         .assertSuccessWithOutput(EXPECTED_OUTPUT);
@@ -95,10 +82,12 @@ public class ConstClassArrayTest extends TestBase {
 
   @Test
   public void testR8() throws Exception {
+    parameters.assumeR8TestParameters();
     testForR8(parameters.getBackend())
         .addInnerClasses(getClass())
         .addKeepMainRule(TestClass.class)
         .setMinApi(parameters)
+        .setMode(compilationMode)
         .enableInliningAnnotations()
         .addDontObfuscate()
         .run(parameters.getRuntime(), TestClass.class)
@@ -110,34 +99,56 @@ public class ConstClassArrayTest extends TestBase {
 
     @NeverInline
     public static void m1() {
-      Class<?>[] classArray = {A.class, B.class, C.class, D.class, E.class};
-      printArray(classArray);
+      Class<?>[][] array = {
+        new Class<?>[] {A.class, B.class},
+        new Class<?>[] {C.class, D.class},
+        new Class<?>[] {E.class, F.class, G.class},
+        new Class<?>[] {H.class, I.class, J.class}
+      };
+      printArray(array);
     }
 
     @NeverInline
     public static void m2() {
       try {
-        Class<?>[] classArray = {E.class, D.class, C.class, B.class, A.class};
-        printArray(classArray);
+        Class<?>[][] array = {
+          new Class<?>[] {J.class, I.class, H.class},
+          new Class<?>[] {G.class, F.class, E.class},
+          new Class<?>[] {D.class, C.class},
+          new Class<?>[] {B.class, A.class}
+        };
+        printArray(array);
       } catch (Exception e) {
         throw new RuntimeException();
       }
     }
 
     @NeverInline
-    public static void printArray(Class<?>[] classArray) {
+    public static void printArray(Class<?>[][] array) {
       System.out.print("[");
-      for (Class<?> clazz : classArray) {
-        if (clazz != classArray[0]) {
+      for (int i = 0; i < array.length; i++) {
+        if (i != 0) {
           System.out.print(", ");
         }
-        String simpleName = clazz.getName();
+        printArray(array[i]);
+      }
+      System.out.println("]");
+    }
+
+    @NeverInline
+    public static void printArray(Class<?>[] array) {
+      System.out.print("[");
+      for (int i = 0; i < array.length; i++) {
+        if (i != 0) {
+          System.out.print(", ");
+        }
+        String simpleName = array[i].getName();
         if (simpleName.lastIndexOf("$") > 0) {
           simpleName = simpleName.substring(simpleName.lastIndexOf("$") + 1);
         }
         System.out.print(simpleName);
       }
-      System.out.println("]");
+      System.out.print("]");
     }
 
     public static void main(String[] args) {
@@ -155,4 +166,14 @@ public class ConstClassArrayTest extends TestBase {
   class D {}
 
   class E {}
+
+  class F {}
+
+  class G {}
+
+  class H {}
+
+  class I {}
+
+  class J {}
 }

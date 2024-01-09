@@ -31,7 +31,7 @@ bugs](https://issuetracker.google.com/issues/new?component=326788) in the
 
 
 
-## Introduction<a id="introduction"></a>
+## Introduction<a name="introduction"></a>
 
 When using a Java/Kotlin shrinker such as R8 or Proguard, developers must inform
 the shrinker about parts of the program that are used either externally from the
@@ -50,7 +50,7 @@ allowing more precise shrinking.  In addition, the annotations are defined
 independent from keep rules and have a hopefully more clear and direct meaning.
 
 
-## Build configuration<a id="build-configuration"></a>
+## Build configuration<a name="build-configuration"></a>
 
 To use the keep annotations your build must include the library of
 annotations. It is currently built as part of each R8 build and if used with R8,
@@ -77,7 +77,7 @@ java -Dcom.android.tools.r8.enableKeepAnnotations=1 \
 ```
 
 
-## Annotating code using reflection<a id="using-reflection"></a>
+## Annotating code using reflection<a name="using-reflection"></a>
 
 The keep annotation library defines a family of annotations depending on your
 use case. You should generally prefer [@UsesReflection](https://storage.googleapis.com/r8-releases/raw/main/docs/keepanno/javadoc/com/android/tools/r8/keepanno/annotations/UsesReflection.html) where applicable.
@@ -85,7 +85,7 @@ Common uses of reflection are to lookup fields and methods on classes. Examples
 of such use cases are detailed below.
 
 
-### Invoking methods<a id="using-reflection-methods"></a>
+### Invoking methods<a name="using-reflection-methods"></a>
 
 For example, if your program is reflectively invoking a method, you
 should annotate the method that is doing the reflection. The annotation must describe the
@@ -117,7 +117,7 @@ public class MyHiddenMethodCaller {
 
 
 
-### Accessing fields<a id="using-reflection-fields"></a>
+### Accessing fields<a name="using-reflection-fields"></a>
 
 For example, if your program is reflectively accessing the fields on a class, you should
 annotate the method that is doing the reflection.
@@ -152,17 +152,153 @@ public class MyFieldValuePrinter {
 
 
 
-## Annotating code used by reflection (or via JNI)<a id="used-by-reflection"></a>
+## Annotating code used by reflection (or via JNI)<a name="used-by-reflection"></a>
 
-TODO
+Sometimes reflecting code cannot be annotated. For example, the reflection can
+be done in native code or in a library outside your control. In such cases you
+can annotate the code that is being used by reflection with either
+[@UsedByReflection](https://storage.googleapis.com/r8-releases/raw/main/docs/keepanno/javadoc/com/android/tools/r8/keepanno/annotations/UsedByReflection.html) or [@UsedByNative](https://storage.googleapis.com/r8-releases/raw/main/docs/keepanno/javadoc/com/android/tools/r8/keepanno/annotations/UsedByNative.html). These two annotations are equivalent.
+Use the one that best matches why the annotation is needed.
+
+Let's consider some code with reflection outside our control.
+For example, the same field printing as in the above example might be part of a library.
+
+In this example, the `MyClassWithFields` is a class you are passing to the
+field-printing utility of the library. Since the library is reflectively accessing each field
+we annotate them with the [@UsedByReflection](https://storage.googleapis.com/r8-releases/raw/main/docs/keepanno/javadoc/com/android/tools/r8/keepanno/annotations/UsedByReflection.html) annotation.
+
+We could additionally add the [@UsedByReflection.constraints](https://storage.googleapis.com/r8-releases/raw/main/docs/keepanno/javadoc/com/android/tools/r8/keepanno/annotations/UsedByReflection.html#constraints()) property as we did previously.
+We elide it here for brevity.
 
 
-## Annotating APIs<a id="apis"></a>
+```
+public class MyClassWithFields implements PrintableFieldInterface {
+  @UsedByReflection final int intField = 42;
 
-TODO
+  @UsedByReflection String stringField = "Hello!";
+}
+
+public static void run() throws Exception {
+  new FieldValuePrinterLibrary().printFieldValues(new MyClassWithFields());
+}
+```
 
 
-## Migrating rules to annotations<a id="migrating-rules"></a>
+Rather than annotate the individual fields we can annotate the holder and add a specification
+similar to the [@KeepTarget](https://storage.googleapis.com/r8-releases/raw/main/docs/keepanno/javadoc/com/android/tools/r8/keepanno/annotations/KeepTarget.html). The [@UsedByReflection.kind](https://storage.googleapis.com/r8-releases/raw/main/docs/keepanno/javadoc/com/android/tools/r8/keepanno/annotations/UsedByReflection.html#kind()) specifies that only the fields are
+used reflectively. In particular, the "field printer" example we are considering here does not
+make reflective assumptions about the holder class, so we should not constrain it.
+
+To be more precise let's add the [@UsedByReflection.constraints](https://storage.googleapis.com/r8-releases/raw/main/docs/keepanno/javadoc/com/android/tools/r8/keepanno/annotations/UsedByReflection.html#constraints()) property now. This specifies
+that the fields are looked up, their names are used/assumed and their values are read.
+
+
+```
+@UsedByReflection(
+    kind = KeepItemKind.ONLY_FIELDS,
+    constraints = {KeepConstraint.LOOKUP, KeepConstraint.NAME, KeepConstraint.FIELD_GET})
+public class MyClassWithFields implements PrintableFieldInterface {
+  final int intField = 42;
+  String stringField = "Hello!";
+}
+```
+
+
+Our use of [@UsedByReflection](https://storage.googleapis.com/r8-releases/raw/main/docs/keepanno/javadoc/com/android/tools/r8/keepanno/annotations/UsedByReflection.html) is still not as flexible as the original [@UsesReflection](https://storage.googleapis.com/r8-releases/raw/main/docs/keepanno/javadoc/com/android/tools/r8/keepanno/annotations/UsesReflection.html). In
+particular, if we change our code to no longer have any call to the library method
+`printFieldValues` the shrinker will still keep all of the fields on our annotated class.
+
+This is because the [@UsesReflection](https://storage.googleapis.com/r8-releases/raw/main/docs/keepanno/javadoc/com/android/tools/r8/keepanno/annotations/UsesReflection.html) implicitly encodes as a precondition that the annotated
+method is actually used in the program. If not, the [@UsesReflection](https://storage.googleapis.com/r8-releases/raw/main/docs/keepanno/javadoc/com/android/tools/r8/keepanno/annotations/UsesReflection.html) annotation is not
+"active".
+
+Luckily we can specify the same precondition using [@UsedByReflection.preconditions](https://storage.googleapis.com/r8-releases/raw/main/docs/keepanno/javadoc/com/android/tools/r8/keepanno/annotations/UsedByReflection.html#preconditions()).
+
+
+```
+@UsedByReflection(
+    preconditions = {
+      @KeepCondition(
+          classConstant = FieldValuePrinterLibrary.class,
+          methodName = "printFieldValues")
+    },
+    kind = KeepItemKind.ONLY_FIELDS,
+    constraints = {KeepConstraint.LOOKUP, KeepConstraint.NAME, KeepConstraint.FIELD_GET})
+public class MyClassWithFields implements PrintableFieldInterface {
+  final int intField = 42;
+  String stringField = "Hello!";
+}
+```
+
+
+
+## Annotating APIs<a name="apis"></a>
+
+If your code is being shrunk before release as a library, or if you have an API
+surface that is used via dynamic loading at runtime, then you need to keep the
+API surface. For that you should use the [@KeepForApi](https://storage.googleapis.com/r8-releases/raw/main/docs/keepanno/javadoc/com/android/tools/r8/keepanno/annotations/KeepForApi.html) annotation.
+
+When annotating a class the default for [@KeepForApi](https://storage.googleapis.com/r8-releases/raw/main/docs/keepanno/javadoc/com/android/tools/r8/keepanno/annotations/KeepForApi.html) is to keep the class as well as all of its
+public and protected members:
+
+
+```
+@KeepForApi
+public class MyApi {
+  public void thisPublicMethodIsKept() {
+    /* ... */
+  }
+
+  protected void thisProtectedMethodIsKept() {
+    /* ... */
+  }
+
+  void thisPackagePrivateMethodIsNotKept() {
+    /* ... */
+  }
+
+  private void thisPrivateMethodIsNotKept() {
+    /* ... */
+  }
+}
+```
+
+
+The default can be changed using the [@KeepForApi.memberAccess](https://storage.googleapis.com/r8-releases/raw/main/docs/keepanno/javadoc/com/android/tools/r8/keepanno/annotations/KeepForApi.html#memberAccess()) property:
+
+
+```
+@KeepForApi(
+    memberAccess = {
+      MemberAccessFlags.PUBLIC,
+      MemberAccessFlags.PROTECTED,
+      MemberAccessFlags.PACKAGE_PRIVATE
+    })
+```
+
+
+The [@KeepForApi](https://storage.googleapis.com/r8-releases/raw/main/docs/keepanno/javadoc/com/android/tools/r8/keepanno/annotations/KeepForApi.html) annotation can also be placed directly on members and avoid keeping
+unannotated members. The holder class is implicitly kept. When annotating the members
+directly, the access does not matter as illustrated here by annotating a package private method:
+
+
+```
+public class MyOtherApi {
+
+  public void notKept() {
+    /* ... */
+  }
+
+  @KeepForApi
+  void isKept() {
+    /* ... */
+  }
+}
+```
+
+
+
+## Migrating rules to annotations<a name="migrating-rules"></a>
 
 There is no automatic migration of keep rules. Keep annotations often invert the
 direction and rules have no indication of where the reflection is taking
@@ -202,7 +338,7 @@ public class SomeClass {
 
 
 
-## My use case is not covered!<a id="other-uses"></a>
+## My use case is not covered!<a name="other-uses"></a>
 
 The annotation library is in active development and not all use cases are
 described here or supported. Reach out to the R8 team by
@@ -210,7 +346,7 @@ described here or supported. Reach out to the R8 team by
 Describe your use case and we will look at how best to support it.
 
 
-## Troubleshooting<a id="troubleshooting"></a>
+## Troubleshooting<a name="troubleshooting"></a>
 
 If an annotation is not working as expected it may be helpful to inspect the
 rules that have been extracted for the annotation. This can be done by

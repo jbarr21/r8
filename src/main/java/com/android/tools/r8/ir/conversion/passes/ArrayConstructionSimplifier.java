@@ -96,15 +96,12 @@ public class ArrayConstructionSimplifier extends CodeRewriterPass<AppInfo> {
       BasicBlock block = worklist.next();
       hasChanged |= simplifyArrayConstructionBlock(block, worklist, code, appView.options());
     }
-    if (hasChanged) {
-      code.removeRedundantBlocks();
-    }
     return CodeRewriterResult.hasChanged(hasChanged);
   }
 
   @Override
   protected boolean shouldRewriteCode(IRCode code) {
-    return true;
+    return code.metadata().mayHaveNewArrayEmpty();
   }
 
   private boolean simplifyArrayConstructionBlock(

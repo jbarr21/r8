@@ -31,11 +31,14 @@ import com.android.tools.r8.ir.code.Position;
 import com.android.tools.r8.ir.code.StaticGet;
 import com.android.tools.r8.ir.code.Value;
 import com.android.tools.r8.ir.conversion.passes.result.CodeRewriterResult;
+import com.android.tools.r8.utils.BooleanBox;
 import com.android.tools.r8.utils.InternalOptions.RewriteArrayOptions;
 import com.android.tools.r8.utils.SetUtils;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import java.util.ArrayList;
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -61,31 +64,63 @@ public class FilledNewArrayRewriter extends CodeRewriterPass<AppInfo> {
   protected CodeRewriterResult rewriteCode(IRCode code) {
     assert !mayHaveRedundantBlocks;
     assert toRemove == NOTHING;
-    BasicBlockIterator blockIterator = code.listIterator();
     CodeRewriterResult result = noChange();
-    while (blockIterator.hasNext()) {
-      BasicBlock block = blockIterator.next();
-      BasicBlockInstructionListIterator instructionIterator = block.listIterator(code);
-      while (instructionIterator.hasNext()) {
-        Instruction instruction = instructionIterator.next();
-        if (instruction.isNewArrayFilled()) {
-          result =
-              processInstruction(
-                  code, blockIterator, instructionIterator, instruction.asNewArrayFilled(), result);
+    BooleanBox pendingRewrites = new BooleanBox(true);
+    while (pendingRewrites.get()) {
+      pendingRewrites.set(false);
+      BasicBlockIterator blockIterator = code.listIterator();
+      while (blockIterator.hasNext()) {
+        BasicBlock block = blockIterator.next();
+        BasicBlockInstructionListIterator instructionIterator = block.listIterator(code);
+        while (instructionIterator.hasNext()) {
+          Instruction instruction = instructionIterator.next();
+          if (instruction.isNewArrayFilled()) {
+            result =
+                processInstruction(
+                    code,
+                    blockIterator,
+                    instructionIterator,
+                    instruction.asNewArrayFilled(),
+                    result,
+                    pendingRewrites);
+          }
         }
       }
-    }
-    if (!toRemove.isEmpty()) {
-      InstructionListIterator it = code.instructionListIterator();
-      while (it.hasNext()) {
-        if (toRemove.contains(it.next())) {
-          it.remove();
-          mayHaveRedundantBlocks = true;
+      if (!toRemove.isEmpty()) {
+        Set<Instruction> additionalToRemove = SetUtils.newIdentityHashSet();
+        InstructionListIterator it = code.instructionListIterator();
+        while (it.hasNext()) {
+          Instruction next = it.next();
+          if (toRemove.contains(next)) {
+            // Also remove constants used by the removed NewArrayFilled.
+            if (next.isNewArrayFilled()) {
+              next.inValues()
+                  .forEach(
+                      value -> {
+                        if (value.hasSingleUniqueUser()) {
+                          additionalToRemove.add(value.getDefinition());
+                        }
+                      });
+            }
+            it.remove();
+            mayHaveRedundantBlocks = true;
+          }
+        }
+        if (!additionalToRemove.isEmpty()) {
+          InstructionListIterator itAdditional = code.instructionListIterator();
+          while (itAdditional.hasNext()) {
+            Instruction next = itAdditional.next();
+            if (additionalToRemove.contains(next)) {
+              itAdditional.remove();
+              mayHaveRedundantBlocks = true;
+            }
+          }
         }
       }
-    }
-    if (mayHaveRedundantBlocks) {
-      code.removeRedundantBlocks();
+      toRemove = NOTHING;
+      if (mayHaveRedundantBlocks) {
+        code.removeRedundantBlocks();
+      }
     }
     return result;
   }
@@ -95,12 +130,49 @@ public class FilledNewArrayRewriter extends CodeRewriterPass<AppInfo> {
     return code.metadata().mayHaveNewArrayFilled();
   }
 
+  private boolean isNewArrayFilledOfConstants(NewArrayFilled newArrayFilled) {
+    for (Value inValue : newArrayFilled.inValues()) {
+      if (!inValue.isConstNumber() && !inValue.isConstString() && !inValue.isConstClass()) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private boolean isDefinedByNewArrayFilledOfConstants(Value value) {
+    if (!value.isDefinedByInstructionSatisfying(Instruction::isNewArrayFilled)) {
+      return false;
+    }
+    return isNewArrayFilledOfConstants(value.definition.asNewArrayFilled());
+  }
+
+  public NewArrayFilled copyConstantsNewArrayFilled(IRCode code, NewArrayFilled original) {
+    assert isNewArrayFilledOfConstants(original);
+    Value newValue = code.createValue(original.getOutType(), original.getLocalInfo());
+    List<Value> newArguments = new ArrayList<>(original.inValues().size());
+    for (Value value : original.inValues()) {
+      if (value.isConstNumber()) {
+        newArguments.add(
+            ConstNumber.copyOf(code, value.getDefinition().asConstNumber()).outValue());
+      } else if (value.isConstString()) {
+        newArguments.add(
+            ConstString.copyOf(code, value.getDefinition().asConstString()).outValue());
+      } else if (value.isConstClass()) {
+        newArguments.add(ConstClass.copyOf(code, value.getDefinition().asConstClass()).outValue());
+      } else {
+        assert false;
+      }
+    }
+    return new NewArrayFilled(original.getArrayType(), newValue, newArguments);
+  }
+
   private CodeRewriterResult processInstruction(
       IRCode code,
       BasicBlockIterator blockIterator,
       BasicBlockInstructionListIterator instructionIterator,
       NewArrayFilled newArrayFilled,
-      CodeRewriterResult result) {
+      CodeRewriterResult result,
+      BooleanBox pendingRewrites) {
     if (canUseNewArrayFilled(newArrayFilled)) {
       return result;
     }
@@ -108,13 +180,59 @@ public class FilledNewArrayRewriter extends CodeRewriterPass<AppInfo> {
       instructionIterator.removeOrReplaceByDebugLocalRead();
     } else if (canUseNewArrayFilledData(newArrayFilled)) {
       rewriteToNewArrayFilledData(code, blockIterator, instructionIterator, newArrayFilled);
+    } else if (newArrayFilled.outValue().hasSingleUniqueUser()
+        && newArrayFilled.outValue().singleUniqueUser().isNewArrayFilled()
+        && isNewArrayFilledOfConstants(newArrayFilled)) {
+      if (canUseNewArrayFilled(newArrayFilled.outValue().singleUniqueUser().asNewArrayFilled())) {
+        // The NewArrayFilled user is supported, so rewrite here.
+        rewriteToArrayPuts(code, blockIterator, instructionIterator, newArrayFilled);
+      } else {
+        // The NewArrayFilled user is not supported so leave for rewriting after that.
+        //
+        // The effect of this is that when the user of this NewArrayFilled is rewritten to puts,
+        // the NewArrayFilled construction is copied to the use site
+        //
+        //  Input:
+        //
+        //   v0 <-  Const X
+        //   v1 <-  NewArrayFilled(v0)
+        //   v2 <-  Const Y
+        //   v3 <-  NewArrayFilled(v2)
+        //   v4 <-  NewArrayFilled(v1, v3)
+        //
+        // After rewriting the user (v0 - v3 are unused and removed):
+        //
+        //   v4 <-  NewArrayEmpty(...)
+        //   v5 <-  Const X
+        //   v6 <-  NewArrayFilled(v5)
+        //          APut v4, <Const 0>, v6
+        //   v7 <-  Const Y
+        //   v8 <-  NewArrayFilled(v7)
+        //          APut v4, <Const 1>, v8
+        //
+        // Setting pending rewrites cause the copied NewArrayFilled to be rewritten in their new
+        // location in the fixpoint:
+        //
+        //   v4 <-  NewArrayEmpty(...)
+        //   v9 <-  NewArrayEmpty(...)
+        //   v10 <- Const X
+        //          APut v9, <Const 0>, v10
+        //          APut v4, <Const 0>, v9
+        //   v11 <- NewArrayEmpty(...)
+        //   v12 <- Const Y
+        //          APut v11, <Const 0>, v12
+        //          APut v4, <Const 1>, v11
+        //
+        // If the NewArrayFilled which gets moved is supported then the second rewriting in the
+        // fixpoint does not happen.
+        pendingRewrites.set(true);
+      }
     } else {
       rewriteToArrayPuts(code, blockIterator, instructionIterator, newArrayFilled);
     }
     return CodeRewriterResult.HAS_CHANGED;
   }
 
-  @SuppressWarnings("ReferenceEquality")
   private boolean canUseNewArrayFilled(NewArrayFilled newArrayFilled) {
     if (!options.isGeneratingDex()) {
       return false;
@@ -125,7 +243,7 @@ public class FilledNewArrayRewriter extends CodeRewriterPass<AppInfo> {
     }
     // filled-new-array is implemented only for int[] and Object[].
     DexType arrayType = newArrayFilled.getArrayType();
-    if (arrayType == dexItemFactory.intArrayType) {
+    if (arrayType.isIdenticalTo(dexItemFactory.intArrayType)) {
       // For int[], using filled-new-array is usually smaller than filled-array-data.
       // filled-new-array supports up to 5 registers before it's filled-new-array/range.
       if (size > rewriteArrayOptions.maxSizeForFilledNewArrayOfInts) {
@@ -143,7 +261,7 @@ public class FilledNewArrayRewriter extends CodeRewriterPass<AppInfo> {
       if (size > rewriteArrayOptions.maxSizeForFilledNewArrayOfReferences) {
         return false;
       }
-      if (arrayType == dexItemFactory.stringArrayType) {
+      if (arrayType.isIdenticalTo(dexItemFactory.stringArrayType)) {
         return rewriteArrayOptions.canUseFilledNewArrayOfStrings();
       }
       if (!rewriteArrayOptions.canUseFilledNewArrayOfNonStringObjects()) {
@@ -155,7 +273,7 @@ public class FilledNewArrayRewriter extends CodeRewriterPass<AppInfo> {
       }
       // Check that all arguments to the array is the array type or that the array is type Object[].
       if (rewriteArrayOptions.canHaveSubTypesInFilledNewArrayBug()
-          && arrayType != dexItemFactory.objectArrayType
+          && arrayType.isNotIdenticalTo(dexItemFactory.objectArrayType)
           && !arrayType.isPrimitiveArrayType()) {
         DexType arrayElementType = arrayType.toArrayElementType(dexItemFactory);
         for (Value elementValue : newArrayFilled.inValues()) {
@@ -169,9 +287,8 @@ public class FilledNewArrayRewriter extends CodeRewriterPass<AppInfo> {
     return false;
   }
 
-  @SuppressWarnings("ReferenceEquality")
   private boolean canStoreElementInNewArrayFilled(TypeElement valueType, DexType elementType) {
-    if (elementType == dexItemFactory.objectType) {
+    if (elementType.isIdenticalTo(dexItemFactory.objectType)) {
       return true;
     }
     if (valueType.isNullType() && !elementType.isPrimitiveType()) {
@@ -512,7 +629,9 @@ public class FilledNewArrayRewriter extends CodeRewriterPass<AppInfo> {
         || !(elementValue.isConstString()
             || elementValue.isConstNumber()
             || elementValue.isConstClass()
-            || elementValue.isDefinedByInstructionSatisfying(Instruction::isStaticGet))) {
+            || elementValue.isDefinedByInstructionSatisfying(Instruction::isStaticGet)
+            || (isDefinedByNewArrayFilledOfConstants(elementValue)
+                && !instructionIterator.getBlock().hasCatchHandlers()))) {
       return elementValue;
     }
 
@@ -534,6 +653,14 @@ public class FilledNewArrayRewriter extends CodeRewriterPass<AppInfo> {
     } else if (elementValue.isDefinedByInstructionSatisfying(Instruction::isStaticGet)) {
       copy = StaticGet.copyOf(code, elementValue.getDefinition().asStaticGet());
       constantMaterializingInstructionCache.putNewValue(copy.asStaticGet().outValue());
+    } else if (isDefinedByNewArrayFilledOfConstants(elementValue)) {
+      copy = copyConstantsNewArrayFilled(code, elementValue.getDefinition().asNewArrayFilled());
+      assert !instructionIterator.getBlock().hasCatchHandlers();
+      for (Value inValue : copy.asNewArrayFilled().inValues()) {
+        instructionIterator.add(inValue.getDefinition());
+        inValue.getDefinition().setBlock(instructionIterator.getBlock());
+        inValue.getDefinition().setPosition(newArrayEmpty.getPosition());
+      }
     } else {
       assert false;
       return elementValue;
