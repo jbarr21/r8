@@ -22,12 +22,15 @@ public class KeepClassItemPattern extends KeepItemPattern {
 
     private KeepQualifiedClassNamePattern classNamePattern = KeepQualifiedClassNamePattern.any();
     private KeepInstanceOfPattern instanceOfPattern = KeepInstanceOfPattern.any();
+    private OptionalPattern<KeepQualifiedClassNamePattern> annotatedByPattern =
+        OptionalPattern.absent();
 
     private Builder() {}
 
     public Builder copyFrom(KeepClassItemPattern pattern) {
       return setClassNamePattern(pattern.getClassNamePattern())
-          .setInstanceOfPattern(pattern.getInstanceOfPattern());
+          .setInstanceOfPattern(pattern.getInstanceOfPattern())
+          .setAnnotatedByPattern(pattern.getAnnotatedByPattern());
     }
 
     public Builder setClassNamePattern(KeepQualifiedClassNamePattern classNamePattern) {
@@ -40,20 +43,32 @@ public class KeepClassItemPattern extends KeepItemPattern {
       return this;
     }
 
+    public Builder setAnnotatedByPattern(
+        OptionalPattern<KeepQualifiedClassNamePattern> annotatedByPattern) {
+      assert annotatedByPattern != null;
+      this.annotatedByPattern = annotatedByPattern;
+      return this;
+    }
+
     public KeepClassItemPattern build() {
-      return new KeepClassItemPattern(classNamePattern, instanceOfPattern);
+      return new KeepClassItemPattern(classNamePattern, instanceOfPattern, annotatedByPattern);
     }
   }
 
   private final KeepQualifiedClassNamePattern classNamePattern;
   private final KeepInstanceOfPattern instanceOfPattern;
+  private final OptionalPattern<KeepQualifiedClassNamePattern> annotatedByPattern;
 
   public KeepClassItemPattern(
-      KeepQualifiedClassNamePattern classNamePattern, KeepInstanceOfPattern instanceOfPattern) {
+      KeepQualifiedClassNamePattern classNamePattern,
+      KeepInstanceOfPattern instanceOfPattern,
+      OptionalPattern<KeepQualifiedClassNamePattern> annotatedByPattern) {
     assert classNamePattern != null;
     assert instanceOfPattern != null;
+    assert annotatedByPattern != null;
     this.classNamePattern = classNamePattern;
     this.instanceOfPattern = instanceOfPattern;
+    this.annotatedByPattern = annotatedByPattern;
   }
 
   @Override
@@ -83,8 +98,12 @@ public class KeepClassItemPattern extends KeepItemPattern {
     return instanceOfPattern;
   }
 
+  public OptionalPattern<KeepQualifiedClassNamePattern> getAnnotatedByPattern() {
+    return annotatedByPattern;
+  }
+
   public boolean isAny() {
-    return classNamePattern.isAny() && instanceOfPattern.isAny();
+    return classNamePattern.isAny() && instanceOfPattern.isAny() && annotatedByPattern.isAbsent();
   }
 
   @Override
@@ -97,12 +116,13 @@ public class KeepClassItemPattern extends KeepItemPattern {
     }
     KeepClassItemPattern that = (KeepClassItemPattern) obj;
     return classNamePattern.equals(that.classNamePattern)
-        && instanceOfPattern.equals(that.instanceOfPattern);
+        && instanceOfPattern.equals(that.instanceOfPattern)
+        && annotatedByPattern.equals(that.annotatedByPattern);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(classNamePattern, instanceOfPattern);
+    return Objects.hash(classNamePattern, instanceOfPattern, annotatedByPattern);
   }
 
   @Override
@@ -110,6 +130,8 @@ public class KeepClassItemPattern extends KeepItemPattern {
     return "KeepClassItemPattern"
         + "{ class="
         + classNamePattern
+        + ", annotated-by="
+        + annotatedByPattern
         + ", instance-of="
         + instanceOfPattern
         + '}';

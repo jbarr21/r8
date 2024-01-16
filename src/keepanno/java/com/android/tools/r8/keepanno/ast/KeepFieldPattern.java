@@ -17,6 +17,8 @@ public final class KeepFieldPattern extends KeepMemberPattern {
 
   public static class Builder {
 
+    private OptionalPattern<KeepQualifiedClassNamePattern> annotatedByPattern =
+        OptionalPattern.absent();
     private KeepFieldAccessPattern accessPattern = KeepFieldAccessPattern.anyFieldAccess();
     private KeepFieldNamePattern namePattern = KeepFieldNamePattern.any();
     private KeepFieldTypePattern typePattern = KeepFieldTypePattern.any();
@@ -24,6 +26,20 @@ public final class KeepFieldPattern extends KeepMemberPattern {
     private Builder() {}
 
     public Builder self() {
+      return this;
+    }
+
+    public Builder copyFromMemberPattern(KeepMemberPattern memberPattern) {
+      assert memberPattern.isGeneralMember();
+      return setAccessPattern(
+          KeepFieldAccessPattern.builder()
+              .copyOfMemberAccess(memberPattern.getAccessPattern())
+              .build());
+    }
+
+    public Builder setAnnotatedByPattern(
+        OptionalPattern<KeepQualifiedClassNamePattern> annotatedByPattern) {
+      this.annotatedByPattern = annotatedByPattern;
       return this;
     }
 
@@ -43,21 +59,25 @@ public final class KeepFieldPattern extends KeepMemberPattern {
     }
 
     public KeepFieldPattern build() {
-      return new KeepFieldPattern(accessPattern, namePattern, typePattern);
+      return new KeepFieldPattern(annotatedByPattern, accessPattern, namePattern, typePattern);
     }
   }
 
+  private final OptionalPattern<KeepQualifiedClassNamePattern> annotatedByPattern;
   private final KeepFieldAccessPattern accessPattern;
   private final KeepFieldNamePattern namePattern;
   private final KeepFieldTypePattern typePattern;
 
   private KeepFieldPattern(
+      OptionalPattern<KeepQualifiedClassNamePattern> annotatedByPattern,
       KeepFieldAccessPattern accessPattern,
       KeepFieldNamePattern namePattern,
       KeepFieldTypePattern typePattern) {
+    assert annotatedByPattern != null;
     assert accessPattern != null;
     assert namePattern != null;
     assert typePattern != null;
+    this.annotatedByPattern = annotatedByPattern;
     this.accessPattern = accessPattern;
     this.namePattern = namePattern;
     this.typePattern = typePattern;
@@ -69,7 +89,15 @@ public final class KeepFieldPattern extends KeepMemberPattern {
   }
 
   public boolean isAnyField() {
-    return accessPattern.isAny() && namePattern.isAny() && typePattern.isAny();
+    return annotatedByPattern.isAbsent()
+        && accessPattern.isAny()
+        && namePattern.isAny()
+        && typePattern.isAny();
+  }
+
+  @Override
+  public OptionalPattern<KeepQualifiedClassNamePattern> getAnnotatedByPattern() {
+    return annotatedByPattern;
   }
 
   @Override
@@ -94,19 +122,22 @@ public final class KeepFieldPattern extends KeepMemberPattern {
       return false;
     }
     KeepFieldPattern that = (KeepFieldPattern) o;
-    return accessPattern.equals(that.accessPattern)
+    return annotatedByPattern.equals(that.annotatedByPattern)
+        && accessPattern.equals(that.accessPattern)
         && namePattern.equals(that.namePattern)
         && typePattern.equals(that.typePattern);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(accessPattern, namePattern, typePattern);
+    return Objects.hash(annotatedByPattern, accessPattern, namePattern, typePattern);
   }
 
   @Override
   public String toString() {
     return "KeepFieldPattern{"
+        + "annotated-by="
+        + annotatedByPattern
         + "access="
         + accessPattern
         + ", name="

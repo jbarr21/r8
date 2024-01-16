@@ -79,8 +79,9 @@ public @interface KeepBinding {
    *   <li>instanceOfClassNameExclusive
    *   <li>instanceOfClassConstant
    *   <li>instanceOfClassConstantExclusive
-   *   <li>extendsClassName
-   *   <li>extendsClassConstant
+   *   <li>classAnnotatedByClassName
+   *   <li>classAnnotatedByClassConstant
+   *   <li>classAnnotatedByClassNamePattern
    * </ul>
    *
    * <p>If none are specified the default is to match any class.
@@ -149,8 +150,6 @@ public @interface KeepBinding {
    *   <li>instanceOfClassNameExclusive
    *   <li>instanceOfClassConstant
    *   <li>instanceOfClassConstantExclusive
-   *   <li>extendsClassName
-   *   <li>extendsClassConstant
    *   <li>classFromBinding
    * </ul>
    *
@@ -172,8 +171,6 @@ public @interface KeepBinding {
    *   <li>instanceOfClassName
    *   <li>instanceOfClassConstant
    *   <li>instanceOfClassConstantExclusive
-   *   <li>extendsClassName
-   *   <li>extendsClassConstant
    *   <li>classFromBinding
    * </ul>
    *
@@ -192,8 +189,6 @@ public @interface KeepBinding {
    *   <li>instanceOfClassName
    *   <li>instanceOfClassNameExclusive
    *   <li>instanceOfClassConstantExclusive
-   *   <li>extendsClassName
-   *   <li>extendsClassConstant
    *   <li>classFromBinding
    * </ul>
    *
@@ -215,8 +210,6 @@ public @interface KeepBinding {
    *   <li>instanceOfClassName
    *   <li>instanceOfClassNameExclusive
    *   <li>instanceOfClassConstant
-   *   <li>extendsClassName
-   *   <li>extendsClassConstant
    *   <li>classFromBinding
    * </ul>
    *
@@ -227,54 +220,118 @@ public @interface KeepBinding {
   Class<?> instanceOfClassConstantExclusive() default Object.class;
 
   /**
-   * Define the instance-of pattern as classes extending the fully qualified class name.
+   * Define the class-annotated-by pattern by fully qualified class name.
    *
-   * <p>The pattern is exclusive in that it does not match classes that are instances of the
-   * pattern, but only those that are instances of classes that are subclasses of the pattern.
-   *
-   * <p>Mutually exclusive with the following other properties defining instance-of:
+   * <p>Mutually exclusive with the following other properties defining class-annotated-by:
    *
    * <ul>
-   *   <li>instanceOfClassName
-   *   <li>instanceOfClassNameExclusive
-   *   <li>instanceOfClassConstant
-   *   <li>instanceOfClassConstantExclusive
-   *   <li>extendsClassConstant
+   *   <li>classAnnotatedByClassConstant
+   *   <li>classAnnotatedByClassNamePattern
    *   <li>classFromBinding
    * </ul>
    *
-   * <p>If none are specified the default is to match any class instance.
+   * <p>If none are specified the default is to match any class regardless of what the class is
+   * annotated by.
    *
-   * @return The class name that defines what the class must extend.
-   * @deprecated This property is deprecated, use {@link #instanceOfClassName} instead.
+   * @return The qualified class name that defines the annotation.
    */
-  @Deprecated
-  String extendsClassName() default "";
+  String classAnnotatedByClassName() default "";
 
   /**
-   * Define the instance-of pattern as classes extending the referenced Class constant.
+   * Define the class-annotated-by pattern by reference to a Class constant.
    *
-   * <p>The pattern is exclusive in that it does not match classes that are instances of the
-   * pattern, but only those that are instances of classes that are subclasses of the pattern.
-   *
-   * <p>Mutually exclusive with the following other properties defining instance-of:
+   * <p>Mutually exclusive with the following other properties defining class-annotated-by:
    *
    * <ul>
-   *   <li>instanceOfClassName
-   *   <li>instanceOfClassNameExclusive
-   *   <li>instanceOfClassConstant
-   *   <li>instanceOfClassConstantExclusive
-   *   <li>extendsClassName
+   *   <li>classAnnotatedByClassName
+   *   <li>classAnnotatedByClassNamePattern
    *   <li>classFromBinding
    * </ul>
    *
-   * <p>If none are specified the default is to match any class instance.
+   * <p>If none are specified the default is to match any class regardless of what the class is
+   * annotated by.
    *
-   * @return The class constant that defines what the class must extend.
-   * @deprecated This property is deprecated, use {@link #instanceOfClassConstant} instead.
+   * @return The class-constant that defines the annotation.
    */
-  @Deprecated
-  Class<?> extendsClassConstant() default Object.class;
+  Class<?> classAnnotatedByClassConstant() default Object.class;
+
+  /**
+   * Define the class-annotated-by pattern by reference to a class-name pattern.
+   *
+   * <p>Mutually exclusive with the following other properties defining class-annotated-by:
+   *
+   * <ul>
+   *   <li>classAnnotatedByClassName
+   *   <li>classAnnotatedByClassConstant
+   *   <li>classFromBinding
+   * </ul>
+   *
+   * <p>If none are specified the default is to match any class regardless of what the class is
+   * annotated by.
+   *
+   * @return The class-name pattern that defines the annotation.
+   */
+  ClassNamePattern classAnnotatedByClassNamePattern() default @ClassNamePattern(simpleName = "");
+
+  /**
+   * Define the member-annotated-by pattern by fully qualified class name.
+   *
+   * <p>Mutually exclusive with the following other properties defining member-annotated-by:
+   *
+   * <ul>
+   *   <li>memberAnnotatedByClassConstant
+   *   <li>memberAnnotatedByClassNamePattern
+   * </ul>
+   *
+   * <p>Mutually exclusive with all field and method properties as use restricts the match to both
+   * types of members.
+   *
+   * <p>If none are specified the default is to match any member regardless of what the member is
+   * annotated by.
+   *
+   * @return The qualified class name that defines the annotation.
+   */
+  String memberAnnotatedByClassName() default "";
+
+  /**
+   * Define the member-annotated-by pattern by reference to a Class constant.
+   *
+   * <p>Mutually exclusive with the following other properties defining member-annotated-by:
+   *
+   * <ul>
+   *   <li>memberAnnotatedByClassName
+   *   <li>memberAnnotatedByClassNamePattern
+   * </ul>
+   *
+   * <p>Mutually exclusive with all field and method properties as use restricts the match to both
+   * types of members.
+   *
+   * <p>If none are specified the default is to match any member regardless of what the member is
+   * annotated by.
+   *
+   * @return The class-constant that defines the annotation.
+   */
+  Class<?> memberAnnotatedByClassConstant() default Object.class;
+
+  /**
+   * Define the member-annotated-by pattern by reference to a class-name pattern.
+   *
+   * <p>Mutually exclusive with the following other properties defining member-annotated-by:
+   *
+   * <ul>
+   *   <li>memberAnnotatedByClassName
+   *   <li>memberAnnotatedByClassConstant
+   * </ul>
+   *
+   * <p>Mutually exclusive with all field and method properties as use restricts the match to both
+   * types of members.
+   *
+   * <p>If none are specified the default is to match any member regardless of what the member is
+   * annotated by.
+   *
+   * @return The class-name pattern that defines the annotation.
+   */
+  ClassNamePattern memberAnnotatedByClassNamePattern() default @ClassNamePattern(simpleName = "");
 
   /**
    * Define the member-access pattern by matching on access flags.
@@ -285,6 +342,63 @@ public @interface KeepBinding {
    * @return The member access-flag constraints that must be met.
    */
   MemberAccessFlags[] memberAccess() default {};
+
+  /**
+   * Define the method-annotated-by pattern by fully qualified class name.
+   *
+   * <p>Mutually exclusive with the following other properties defining method-annotated-by:
+   *
+   * <ul>
+   *   <li>methodAnnotatedByClassConstant
+   *   <li>methodAnnotatedByClassNamePattern
+   * </ul>
+   *
+   * <p>Mutually exclusive with all field properties.
+   *
+   * <p>If none are specified the default is to match any method regardless of what the method is
+   * annotated by.
+   *
+   * @return The qualified class name that defines the annotation.
+   */
+  String methodAnnotatedByClassName() default "";
+
+  /**
+   * Define the method-annotated-by pattern by reference to a Class constant.
+   *
+   * <p>Mutually exclusive with the following other properties defining method-annotated-by:
+   *
+   * <ul>
+   *   <li>methodAnnotatedByClassName
+   *   <li>methodAnnotatedByClassNamePattern
+   * </ul>
+   *
+   * <p>Mutually exclusive with all field properties.
+   *
+   * <p>If none are specified the default is to match any method regardless of what the method is
+   * annotated by.
+   *
+   * @return The class-constant that defines the annotation.
+   */
+  Class<?> methodAnnotatedByClassConstant() default Object.class;
+
+  /**
+   * Define the method-annotated-by pattern by reference to a class-name pattern.
+   *
+   * <p>Mutually exclusive with the following other properties defining method-annotated-by:
+   *
+   * <ul>
+   *   <li>methodAnnotatedByClassName
+   *   <li>methodAnnotatedByClassConstant
+   * </ul>
+   *
+   * <p>Mutually exclusive with all field properties.
+   *
+   * <p>If none are specified the default is to match any method regardless of what the method is
+   * annotated by.
+   *
+   * @return The class-name pattern that defines the annotation.
+   */
+  ClassNamePattern methodAnnotatedByClassNamePattern() default @ClassNamePattern(simpleName = "");
 
   /**
    * Define the method-access pattern by matching on access flags.
@@ -410,6 +524,63 @@ public @interface KeepBinding {
    * @return The list of type patterns for the method parameters.
    */
   TypePattern[] methodParameterTypePatterns() default {@TypePattern(name = "")};
+
+  /**
+   * Define the field-annotated-by pattern by fully qualified class name.
+   *
+   * <p>Mutually exclusive with the following other properties defining field-annotated-by:
+   *
+   * <ul>
+   *   <li>fieldAnnotatedByClassConstant
+   *   <li>fieldAnnotatedByClassNamePattern
+   * </ul>
+   *
+   * <p>Mutually exclusive with all method properties.
+   *
+   * <p>If none are specified the default is to match any field regardless of what the field is
+   * annotated by.
+   *
+   * @return The qualified class name that defines the annotation.
+   */
+  String fieldAnnotatedByClassName() default "";
+
+  /**
+   * Define the field-annotated-by pattern by reference to a Class constant.
+   *
+   * <p>Mutually exclusive with the following other properties defining field-annotated-by:
+   *
+   * <ul>
+   *   <li>fieldAnnotatedByClassName
+   *   <li>fieldAnnotatedByClassNamePattern
+   * </ul>
+   *
+   * <p>Mutually exclusive with all method properties.
+   *
+   * <p>If none are specified the default is to match any field regardless of what the field is
+   * annotated by.
+   *
+   * @return The class-constant that defines the annotation.
+   */
+  Class<?> fieldAnnotatedByClassConstant() default Object.class;
+
+  /**
+   * Define the field-annotated-by pattern by reference to a class-name pattern.
+   *
+   * <p>Mutually exclusive with the following other properties defining field-annotated-by:
+   *
+   * <ul>
+   *   <li>fieldAnnotatedByClassName
+   *   <li>fieldAnnotatedByClassConstant
+   * </ul>
+   *
+   * <p>Mutually exclusive with all method properties.
+   *
+   * <p>If none are specified the default is to match any field regardless of what the field is
+   * annotated by.
+   *
+   * @return The class-name pattern that defines the annotation.
+   */
+  ClassNamePattern fieldAnnotatedByClassNamePattern() default @ClassNamePattern(simpleName = "");
 
   /**
    * Define the field-access pattern by matching on access flags.

@@ -124,10 +124,6 @@ public class KeepEdgeWriter implements Opcodes {
         target -> {
           AnnotationVisitor targetVisitor =
               arrayVisitor.visitAnnotation(ignoredArrayValueName, Target.DESCRIPTOR);
-          // No options imply keep all.
-          if (!target.getOptions().isKeepAll()) {
-            throw new Unimplemented();
-          }
           if (target.getItem().isBindingReference()) {
             throw new Unimplemented();
           }
@@ -169,10 +165,6 @@ public class KeepEdgeWriter implements Opcodes {
   }
 
   private void writeMember(KeepMemberPattern memberPattern, AnnotationVisitor targetVisitor) {
-    if (memberPattern.isNone()) {
-      // Default is "no methods".
-      return;
-    }
     if (memberPattern.isAllMembers()) {
       throw new Unimplemented();
     }

@@ -17,6 +17,8 @@ package com.android.tools.r8.keepanno.ast;
  * <p>TODO(b/248408342): Update the BNF and AST to be complete.
  *
  * <pre>
+ *   OPT(T) ::= absent | present T
+ *
  *   EDGE ::= METAINFO BINDINGS PRECONDITIONS -> CONSEQUENCES
  *   METAINFO ::= [CONTEXT] [DESCRIPTION]
  *   CONTEXT ::= class-descriptor | method-descriptor | field-descriptor
@@ -33,6 +35,24 @@ package com.android.tools.r8.keepanno.ast;
  *
  *   CONSEQUENCES ::= TARGET+
  *   TARGET ::= OPTIONS ITEM_REFERENCE
+ *
+ *   CONSTRAINTS ::= CONSTRAINT+ | OPTIONS (legacy)
+ *   CONSTRAINT
+ *       ::= lookup
+ *         | name
+ *         | visibility-relax
+ *         | visibility-restrict
+ *         | annotations(QUALIFIED_CLASS_NAME_PATTERN*)
+ *         | never-inline
+ *         | class-instantiate
+ *         | class-open-hierarchy
+ *         | method-invoke
+ *         | method-replace
+ *         | field-get
+ *         | field-set
+ *         | field-replace
+ *
+ *   (legacy options - deprecated)
  *   OPTIONS ::= keep-all | OPTION+
  *   OPTION ::= shrinking | optimizing | obfuscating | access-modification | annotation-removal
  *
@@ -41,7 +61,9 @@ package com.android.tools.r8.keepanno.ast;
  *   MEMBER_ITEM_REFERENCE ::= MEMBER_BINDING_REFERENCE | MEMBER_ITEM_PATTERN
  *
  *   ITEM_PATTERN ::= CLASS_ITEM_PATTERN | MEMBER_ITEM_PATTERN
- *   CLASS_ITEM_PATTERN ::= class QUALIFIED_CLASS_NAME_PATTERN instance-of INSTANCE_OF_PATTERN
+ *   CLASS_ITEM_PATTERN ::= class QUALIFIED_CLASS_NAME_PATTERN
+ *                              annotated-by ANNOTATED_BY_PATTERN
+ *                              instance-of INSTANCE_OF_PATTERN
  *   MEMBER_ITEM_PATTERN ::= CLASS_ITEM_REFERENCE { MEMBER_PATTERN }
  *
  *   TYPE_PATTERN
@@ -65,15 +87,24 @@ package com.android.tools.r8.keepanno.ast;
  *   INSTANCE_OF_PATTERN_INCLUSIVE ::= QUALIFIED_CLASS_NAME_PATTERN
  *   INSTANCE_OF_PATTERN_EXCLUSIVE ::= QUALIFIED_CLASS_NAME_PATTERN
  *
- *   MEMBER_PATTERN ::= none | all | FIELD_PATTERN | METHOD_PATTERN
+ *   ANNOTATED_BY_PATTERN ::= OPT(QUALIFIED_CLASS_NAME_PATTERN)
+ *
+ *   MEMBER_PATTERN ::= GENERAL_MEMBER_PATTERN | FIELD_PATTERN | METHOD_PATTERN
+ *
+ *   GENERAL_MEMBER_PATTERN
+ *     ::= ANNOTATED_BY_PATTERN
+ *           MEMBER_ACCESS_PATTERN
+ *           any
  *
  *   FIELD_PATTERN
- *     ::= FIELD_ACCESS_PATTERN
+ *     ::= ANNOTATED_BY_PATTERN
+ *           FIELD_ACCESS_PATTERN
  *           FIELD_TYPE_PATTERN
  *           FIELD_NAME_PATTERN;
  *
  *   METHOD_PATTERN
- *     ::= METHOD_ACCESS_PATTERN
+ *     ::= ANNOTATED_BY_PATTERN
+ *           METHOD_ACCESS_PATTERN
  *           METHOD_RETURN_TYPE_PATTERN
  *           METHOD_NAME_PATTERN
  *           METHOD_PARAMETERS_PATTERN

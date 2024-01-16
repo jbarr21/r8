@@ -3,6 +3,7 @@
 // BSD-style license that can be found in the LICENSE file.
 package com.android.tools.r8.keepanno.keeprules;
 
+import com.android.tools.r8.keepanno.ast.KeepAttribute;
 import com.android.tools.r8.keepanno.ast.KeepBindingReference;
 import com.android.tools.r8.keepanno.ast.KeepBindings;
 import com.android.tools.r8.keepanno.ast.KeepBindings.KeepBindingSymbol;
@@ -10,6 +11,7 @@ import com.android.tools.r8.keepanno.ast.KeepCheck;
 import com.android.tools.r8.keepanno.ast.KeepCheck.KeepCheckKind;
 import com.android.tools.r8.keepanno.ast.KeepClassItemPattern;
 import com.android.tools.r8.keepanno.ast.KeepCondition;
+import com.android.tools.r8.keepanno.ast.KeepConstraints;
 import com.android.tools.r8.keepanno.ast.KeepDeclaration;
 import com.android.tools.r8.keepanno.ast.KeepEdge;
 import com.android.tools.r8.keepanno.ast.KeepEdgeException;
@@ -29,6 +31,7 @@ import com.android.tools.r8.keepanno.ast.KeepQualifiedClassNamePattern;
 import com.android.tools.r8.keepanno.ast.KeepTarget;
 import com.android.tools.r8.keepanno.keeprules.PgRule.PgConditionalRule;
 import com.android.tools.r8.keepanno.keeprules.PgRule.PgDependentMembersRule;
+import com.android.tools.r8.keepanno.keeprules.PgRule.PgKeepAttributeRule;
 import com.android.tools.r8.keepanno.keeprules.PgRule.PgUnconditionalRule;
 import com.android.tools.r8.keepanno.keeprules.PgRule.TargetKeepKind;
 import java.util.ArrayDeque;
@@ -208,6 +211,11 @@ public class KeepRuleExtractor {
     }
   }
 
+  private static KeepOptions defaultOptions =
+      KeepOptions.disallowBuilder()
+          .addAll(KeepOption.SHRINKING, KeepOption.OBFUSCATING, KeepOption.OPTIMIZING)
+          .build();
+
   private static class BindingUsers {
 
     final Holder holder;
@@ -229,8 +237,10 @@ public class KeepRuleExtractor {
 
     public void addTarget(KeepTarget target) {
       assert target.getItem().isBindingReference();
+      KeepConstraints constraints = target.getConstraints();
+      KeepOptions options = constraints.convertToKeepOptions(defaultOptions);
       targetRefs
-          .computeIfAbsent(target.getOptions(), k -> new HashSet<>())
+          .computeIfAbsent(options, k -> new HashSet<>())
           .add(target.getItem().asBindingReference().getName());
     }
   }
@@ -238,7 +248,8 @@ public class KeepRuleExtractor {
   @SuppressWarnings("UnnecessaryParentheses")
   private static List<PgRule> doSplit(KeepEdge edge) {
     List<PgRule> rules = new ArrayList<>();
-
+    // Collection for all attribute constraints required for this edge.
+    Set<KeepAttribute> allAttributeConstraints = new HashSet<>();
     // First step after normalizing is to group up all conditions and targets on their target class.
     // Here we use the normalized binding as the notion of identity on a class.
     KeepBindings bindings = edge.getBindings();
@@ -256,6 +267,7 @@ public class KeepRuleExtractor {
     edge.getConsequences()
         .forEachTarget(
             target -> {
+              allAttributeConstraints.addAll(target.getConstraints().getRequiredKeepAttributes());
               KeepBindingSymbol classReference =
                   getClassItemBindingReference(target.getItem(), bindings);
               assert classReference != null;
@@ -263,6 +275,11 @@ public class KeepRuleExtractor {
                   .computeIfAbsent(classReference, k -> BindingUsers.create(k, bindings))
                   .addTarget(target);
             });
+
+    // Generate at most one `-keepattributes` rule for the edge if needed.
+    if (!allAttributeConstraints.isEmpty()) {
+      rules.add(new PgKeepAttributeRule(edge.getMetaInfo(), allAttributeConstraints));
+    }
 
     bindingUsers.forEach(
         (targetBindingName, users) -> {

@@ -23,6 +23,7 @@ import com.android.build.shrinker.usages.R8ResourceShrinker;
 import com.android.build.shrinker.usages.ToolsAttributeUsageRecorderKt;
 import com.android.ide.common.resources.ResourcesUtil;
 import com.android.ide.common.resources.usage.ResourceStore;
+import com.android.ide.common.resources.usage.ResourceUsageModel.Resource;
 import com.android.tools.r8.FeatureSplit;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -130,12 +131,13 @@ public class LegacyResourceShrinker {
     R8ResourceShrinkerModel model = new R8ResourceShrinkerModel(NoDebugReporter.INSTANCE, true);
     for (PathAndBytes pathAndBytes : resourceTables.keySet()) {
       ResourceTable loadedResourceTable = ResourceTable.parseFrom(pathAndBytes.bytes);
-      model.instantiateFromResourceTable(loadedResourceTable);
+      model.instantiateFromResourceTable(loadedResourceTable, false);
     }
-    return shrinkModel(model);
+    return shrinkModel(model, false);
   }
 
-  public ShrinkerResult shrinkModel(R8ResourceShrinkerModel model) throws IOException {
+  public ShrinkerResult shrinkModel(
+      R8ResourceShrinkerModel model, boolean exactMatchingOfStyleablesAndAttr) throws IOException {
     if (proguardMapStrings != null) {
       new ProguardMappingsRecorder(proguardMapStrings).recordObfuscationMappings(model);
       proguardMapStrings = null;
@@ -183,7 +185,8 @@ public class LegacyResourceShrinker {
     // Transitively mark the reachable resources in the model.
     // Finds unused resources in provided resources collection.
     // Marks all used resources as 'reachable' in original collection.
-    ResourcesUtil.findUnusedResources(model.getResourceStore().getResources(), x -> {});
+    List<Resource> unusedResources =
+        ResourcesUtil.findUnusedResources(model.getResourceStore().getResources(), x -> {});
     ImmutableSet.Builder<String> resEntriesToKeep = new ImmutableSet.Builder<>();
     for (PathAndBytes xmlInput : Iterables.concat(xmlInputs, resFolderInputs)) {
       if (ResourceShrinkerImplKt.isJarPathReachable(resourceStore, xmlInput.path.toString())) {
@@ -191,10 +194,7 @@ public class LegacyResourceShrinker {
       }
     }
     List<Integer> resourceIdsToRemove =
-        model.getResourceStore().getResources().stream()
-            .filter(r -> !r.isReachable())
-            .map(r -> r.value)
-            .collect(Collectors.toList());
+        getResourceIdsToRemove(unusedResources, model, exactMatchingOfStyleablesAndAttr);
     Map<FeatureSplit, ResourceTable> shrunkenTables = new HashMap<>();
     for (Entry<PathAndBytes, FeatureSplit> entry : resourceTables.entrySet()) {
       ResourceTable shrunkenResourceTable =
@@ -203,6 +203,19 @@ public class LegacyResourceShrinker {
       shrunkenTables.put(entry.getValue(), shrunkenResourceTable);
     }
     return new ShrinkerResult(resEntriesToKeep.build(), shrunkenTables);
+  }
+
+  private static List<Integer> getResourceIdsToRemove(
+      List<Resource> unusedResources,
+      R8ResourceShrinkerModel model,
+      boolean exactMatchingOfStyleablesAndAttr) {
+    if (!exactMatchingOfStyleablesAndAttr) {
+      return unusedResources.stream().map(resource -> resource.value).collect(Collectors.toList());
+    }
+    return model.getResourceStore().getResources().stream()
+        .filter(r -> !r.isReachable())
+        .map(r -> r.value)
+        .collect(Collectors.toList());
   }
 
   // Lifted from com/android/utils/XmlUtils.java which we can't easily update internal dependency

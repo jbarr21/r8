@@ -83,20 +83,113 @@ public @interface UsedByNative {
    *
    * <p>The specified constraints must remain valid for the target.
    *
-   * <p>The default constraints depend on the type of the target.
+   * <p>The default constraints depend on the kind of the target. For all targets the default
+   * constraints include:
    *
    * <ul>
-   *   <li>For classes, the default is {{@link KeepConstraint#LOOKUP}, {@link KeepConstraint#NAME},
-   *       {@link KeepConstraint#CLASS_INSTANTIATE}}
-   *   <li>For methods, the default is {{@link KeepConstraint#LOOKUP}, {@link KeepConstraint#NAME},
-   *       {@link KeepConstraint#METHOD_INVOKE}}
-   *   <li>For fields, the default is {{@link KeepConstraint#LOOKUP}, {@link KeepConstraint#NAME},
-   *       {@link KeepConstraint#FIELD_GET}, {@link KeepConstraint#FIELD_SET}}
+   *   <li>{@link KeepConstraint#LOOKUP}
+   *   <li>{@link KeepConstraint#NAME}
+   *   <li>{@link KeepConstraint#VISIBILITY_RELAX}
    * </ul>
+   *
+   * <p>For classes the default constraints also include:
+   *
+   * <ul>
+   *   <li>{@link KeepConstraint#CLASS_INSTANTIATE}
+   * </ul>
+   *
+   * <p>For methods the default constraints also include:
+   *
+   * <ul>
+   *   <li>{@link KeepConstraint#METHOD_INVOKE}
+   * </ul>
+   *
+   * <p>For fields the default constraints also include:
+   *
+   * <ul>
+   *   <li>{@link KeepConstraint#FIELD_GET}
+   *   <li>{@link KeepConstraint#FIELD_SET}
+   * </ul>
+   *
+   * <p>Mutually exclusive with the property `constraintAdditions` also defining constraints.
    *
    * @return Usage constraints for the target.
    */
   KeepConstraint[] constraints() default {};
+
+  /**
+   * Add additional usage constraints of the target.
+   *
+   * <p>The specified constraints must remain valid for the target in addition to the default
+   * constraints.
+   *
+   * <p>The default constraints are documented in {@link #constraints}
+   *
+   * <p>Mutually exclusive with the property `constraints` also defining constraints.
+   *
+   * @return Additional usage constraints for the target.
+   */
+  KeepConstraint[] constraintAdditions() default {};
+
+  /**
+   * Define the member-annotated-by pattern by fully qualified class name.
+   *
+   * <p>Mutually exclusive with the following other properties defining member-annotated-by:
+   *
+   * <ul>
+   *   <li>memberAnnotatedByClassConstant
+   *   <li>memberAnnotatedByClassNamePattern
+   * </ul>
+   *
+   * <p>Mutually exclusive with all field and method properties as use restricts the match to both
+   * types of members.
+   *
+   * <p>If none are specified the default is to match any member regardless of what the member is
+   * annotated by.
+   *
+   * @return The qualified class name that defines the annotation.
+   */
+  String memberAnnotatedByClassName() default "";
+
+  /**
+   * Define the member-annotated-by pattern by reference to a Class constant.
+   *
+   * <p>Mutually exclusive with the following other properties defining member-annotated-by:
+   *
+   * <ul>
+   *   <li>memberAnnotatedByClassName
+   *   <li>memberAnnotatedByClassNamePattern
+   * </ul>
+   *
+   * <p>Mutually exclusive with all field and method properties as use restricts the match to both
+   * types of members.
+   *
+   * <p>If none are specified the default is to match any member regardless of what the member is
+   * annotated by.
+   *
+   * @return The class-constant that defines the annotation.
+   */
+  Class<?> memberAnnotatedByClassConstant() default Object.class;
+
+  /**
+   * Define the member-annotated-by pattern by reference to a class-name pattern.
+   *
+   * <p>Mutually exclusive with the following other properties defining member-annotated-by:
+   *
+   * <ul>
+   *   <li>memberAnnotatedByClassName
+   *   <li>memberAnnotatedByClassConstant
+   * </ul>
+   *
+   * <p>Mutually exclusive with all field and method properties as use restricts the match to both
+   * types of members.
+   *
+   * <p>If none are specified the default is to match any member regardless of what the member is
+   * annotated by.
+   *
+   * @return The class-name pattern that defines the annotation.
+   */
+  ClassNamePattern memberAnnotatedByClassNamePattern() default @ClassNamePattern(simpleName = "");
 
   /**
    * Define the member-access pattern by matching on access flags.
@@ -107,6 +200,63 @@ public @interface UsedByNative {
    * @return The member access-flag constraints that must be met.
    */
   MemberAccessFlags[] memberAccess() default {};
+
+  /**
+   * Define the method-annotated-by pattern by fully qualified class name.
+   *
+   * <p>Mutually exclusive with the following other properties defining method-annotated-by:
+   *
+   * <ul>
+   *   <li>methodAnnotatedByClassConstant
+   *   <li>methodAnnotatedByClassNamePattern
+   * </ul>
+   *
+   * <p>Mutually exclusive with all field properties.
+   *
+   * <p>If none are specified the default is to match any method regardless of what the method is
+   * annotated by.
+   *
+   * @return The qualified class name that defines the annotation.
+   */
+  String methodAnnotatedByClassName() default "";
+
+  /**
+   * Define the method-annotated-by pattern by reference to a Class constant.
+   *
+   * <p>Mutually exclusive with the following other properties defining method-annotated-by:
+   *
+   * <ul>
+   *   <li>methodAnnotatedByClassName
+   *   <li>methodAnnotatedByClassNamePattern
+   * </ul>
+   *
+   * <p>Mutually exclusive with all field properties.
+   *
+   * <p>If none are specified the default is to match any method regardless of what the method is
+   * annotated by.
+   *
+   * @return The class-constant that defines the annotation.
+   */
+  Class<?> methodAnnotatedByClassConstant() default Object.class;
+
+  /**
+   * Define the method-annotated-by pattern by reference to a class-name pattern.
+   *
+   * <p>Mutually exclusive with the following other properties defining method-annotated-by:
+   *
+   * <ul>
+   *   <li>methodAnnotatedByClassName
+   *   <li>methodAnnotatedByClassConstant
+   * </ul>
+   *
+   * <p>Mutually exclusive with all field properties.
+   *
+   * <p>If none are specified the default is to match any method regardless of what the method is
+   * annotated by.
+   *
+   * @return The class-name pattern that defines the annotation.
+   */
+  ClassNamePattern methodAnnotatedByClassNamePattern() default @ClassNamePattern(simpleName = "");
 
   /**
    * Define the method-access pattern by matching on access flags.
@@ -232,6 +382,63 @@ public @interface UsedByNative {
    * @return The list of type patterns for the method parameters.
    */
   TypePattern[] methodParameterTypePatterns() default {@TypePattern(name = "")};
+
+  /**
+   * Define the field-annotated-by pattern by fully qualified class name.
+   *
+   * <p>Mutually exclusive with the following other properties defining field-annotated-by:
+   *
+   * <ul>
+   *   <li>fieldAnnotatedByClassConstant
+   *   <li>fieldAnnotatedByClassNamePattern
+   * </ul>
+   *
+   * <p>Mutually exclusive with all method properties.
+   *
+   * <p>If none are specified the default is to match any field regardless of what the field is
+   * annotated by.
+   *
+   * @return The qualified class name that defines the annotation.
+   */
+  String fieldAnnotatedByClassName() default "";
+
+  /**
+   * Define the field-annotated-by pattern by reference to a Class constant.
+   *
+   * <p>Mutually exclusive with the following other properties defining field-annotated-by:
+   *
+   * <ul>
+   *   <li>fieldAnnotatedByClassName
+   *   <li>fieldAnnotatedByClassNamePattern
+   * </ul>
+   *
+   * <p>Mutually exclusive with all method properties.
+   *
+   * <p>If none are specified the default is to match any field regardless of what the field is
+   * annotated by.
+   *
+   * @return The class-constant that defines the annotation.
+   */
+  Class<?> fieldAnnotatedByClassConstant() default Object.class;
+
+  /**
+   * Define the field-annotated-by pattern by reference to a class-name pattern.
+   *
+   * <p>Mutually exclusive with the following other properties defining field-annotated-by:
+   *
+   * <ul>
+   *   <li>fieldAnnotatedByClassName
+   *   <li>fieldAnnotatedByClassConstant
+   * </ul>
+   *
+   * <p>Mutually exclusive with all method properties.
+   *
+   * <p>If none are specified the default is to match any field regardless of what the field is
+   * annotated by.
+   *
+   * @return The class-name pattern that defines the annotation.
+   */
+  ClassNamePattern fieldAnnotatedByClassNamePattern() default @ClassNamePattern(simpleName = "");
 
   /**
    * Define the field-access pattern by matching on access flags.

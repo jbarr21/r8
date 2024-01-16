@@ -297,6 +297,10 @@ public class KeepItemAnnotationGenerator {
     private static String CLASS_GROUP = "class";
     private static String CLASS_NAME_GROUP = "class-name";
     private static String INSTANCE_OF_GROUP = "instance-of";
+    private static String CLASS_ANNOTATED_BY_GROUP = "class-annotated-by";
+    private static String MEMBER_ANNOTATED_BY_GROUP = "member-annotated-by";
+    private static String METHOD_ANNOTATED_BY_GROUP = "method-annotated-by";
+    private static String FIELD_ANNOTATED_BY_GROUP = "field-annotated-by";
 
     private Group createDescriptionGroup() {
       return new Group("description")
@@ -484,33 +488,7 @@ public class KeepItemAnnotationGenerator {
     }
 
     private Group getKeepConstraintsGroup() {
-      return new Group(CONSTRAINTS_GROUP)
-          .addMember(constraints())
-          .addMember(
-              new GroupMember("allow")
-                  .setDeprecated("Use " + docLink(constraints()) + " instead.")
-                  .setDocTitle(
-                      "Define the " + CONSTRAINTS_GROUP + " that are allowed to be modified.")
-                  .addParagraph(
-                      "The specified option constraints do not need to be preserved for the"
-                          + " target.")
-                  .setDocReturn("Option constraints allowed to be modified for the target.")
-                  .defaultArrayEmpty(KeepOption.class))
-          .addMember(
-              new GroupMember("disallow")
-                  .setDeprecated("Use " + docLink(constraints()) + " instead.")
-                  .setDocTitle(
-                      "Define the " + CONSTRAINTS_GROUP + " that are not allowed to be modified.")
-                  .addParagraph(
-                      "The specified option constraints *must* be preserved for the target.")
-                  .setDocReturn("Option constraints not allowed to be modified for the target.")
-                  .defaultArrayEmpty(KeepOption.class))
-          .addDocFooterParagraph(
-              "If nothing is specified for "
-                  + CONSTRAINTS_GROUP
-                  + " the default is the default for "
-                  + docLink(constraints())
-                  + ".");
+      return new Group(CONSTRAINTS_GROUP).addMember(constraints()).addMember(constraintAdditions());
     }
 
     private static String docLinkList(Enum<?>... values) {
@@ -521,21 +499,31 @@ public class KeepItemAnnotationGenerator {
       return new GroupMember("constraints")
           .setDocTitle("Define the usage constraints of the target.")
           .addParagraph("The specified constraints must remain valid for the target.")
-          .addParagraph("The default constraints depend on the type of the target.")
+          .addParagraph(
+              "The default constraints depend on the kind of the target.",
+              "For all targets the default constraints include:")
           .addUnorderedList(
-              "For classes, the default is "
-                  + docLinkList(
-                      KeepConstraint.LOOKUP, KeepConstraint.NAME, KeepConstraint.CLASS_INSTANTIATE),
-              "For methods, the default is "
-                  + docLinkList(
-                      KeepConstraint.LOOKUP, KeepConstraint.NAME, KeepConstraint.METHOD_INVOKE),
-              "For fields, the default is "
-                  + docLinkList(
-                      KeepConstraint.LOOKUP,
-                      KeepConstraint.NAME,
-                      KeepConstraint.FIELD_GET,
-                      KeepConstraint.FIELD_SET))
+              docLink(KeepConstraint.LOOKUP),
+              docLink(KeepConstraint.NAME),
+              docLink(KeepConstraint.VISIBILITY_RELAX))
+          .addParagraph("For classes the default constraints also include:")
+          .addUnorderedList(docLink(KeepConstraint.CLASS_INSTANTIATE))
+          .addParagraph("For methods the default constraints also include:")
+          .addUnorderedList(docLink(KeepConstraint.METHOD_INVOKE))
+          .addParagraph("For fields the default constraints also include:")
+          .addUnorderedList(docLink(KeepConstraint.FIELD_GET), docLink(KeepConstraint.FIELD_SET))
           .setDocReturn("Usage constraints for the target.")
+          .defaultArrayEmpty(KeepConstraint.class);
+    }
+
+    private static GroupMember constraintAdditions() {
+      return new GroupMember("constraintAdditions")
+          .setDocTitle("Add additional usage constraints of the target.")
+          .addParagraph(
+              "The specified constraints must remain valid for the target",
+              "in addition to the default constraints.")
+          .addParagraph("The default constraints are documented in " + docLink(constraints()))
+          .setDocReturn("Additional usage constraints for the target.")
           .defaultArrayEmpty(KeepConstraint.class);
     }
 
@@ -641,44 +629,50 @@ public class KeepItemAnnotationGenerator {
           .defaultObjectClass();
     }
 
-    private GroupMember extendsClassName() {
-      return new GroupMember("extendsClassName")
-          .setDocTitle(
-              "Define the "
-                  + INSTANCE_OF_GROUP
-                  + " pattern as classes extending the fully qualified class name.")
-          .addParagraph(getInstanceOfExclusiveDoc())
-          .setDeprecated(
-              "This property is deprecated, use " + docLink(instanceOfClassName()) + " instead.")
-          .setDocReturn("The class name that defines what the class must extend.")
-          .defaultEmptyString();
-    }
-
-    private GroupMember extendsClassConstant() {
-      return new GroupMember("extendsClassConstant")
-          .setDocTitle(
-              "Define the "
-                  + INSTANCE_OF_GROUP
-                  + " pattern as classes extending the referenced Class constant.")
-          .addParagraph(getInstanceOfExclusiveDoc())
-          .setDeprecated(
-              "This property is deprecated, use "
-                  + docLink(instanceOfClassConstant())
-                  + " instead.")
-          .setDocReturn("The class constant that defines what the class must extend.")
-          .defaultObjectClass();
-    }
-
     private Group createClassInstanceOfPatternGroup() {
       return new Group(INSTANCE_OF_GROUP)
           .addMember(instanceOfClassName())
           .addMember(instanceOfClassNameExclusive())
           .addMember(instanceOfClassConstant())
           .addMember(instanceOfClassConstantExclusive())
-          .addMember(extendsClassName())
-          .addMember(extendsClassConstant())
           .addDocFooterParagraph(
               "If none are specified the default is to match any class instance.");
+    }
+
+    private String annotatedByDefaultDocFooter(String name) {
+      return "If none are specified the default is to match any "
+          + name
+          + " regardless of what the "
+          + name
+          + " is annotated by.";
+    }
+
+    private Group createAnnotatedByPatternGroup(String name, String groupName) {
+      return new Group(groupName)
+          .addMember(
+              new GroupMember(name + "AnnotatedByClassName")
+                  .setDocTitle(
+                      "Define the " + groupName + " pattern by fully qualified class name.")
+                  .setDocReturn("The qualified class name that defines the annotation.")
+                  .defaultEmptyString())
+          .addMember(
+              new GroupMember(name + "AnnotatedByClassConstant")
+                  .setDocTitle(
+                      "Define the " + groupName + " pattern by reference to a Class constant.")
+                  .setDocReturn("The class-constant that defines the annotation.")
+                  .defaultObjectClass())
+          .addMember(
+              new GroupMember(name + "AnnotatedByClassNamePattern")
+                  .setDocTitle(
+                      "Define the " + groupName + " pattern by reference to a class-name pattern.")
+                  .setDocReturn("The class-name pattern that defines the annotation.")
+                  .defaultValue(ClassNamePattern.class, DEFAULT_INVALID_CLASS_NAME_PATTERN));
+    }
+
+    private Group createClassAnnotatedByPatternGroup() {
+      String name = "class";
+      return createAnnotatedByPatternGroup(name, CLASS_ANNOTATED_BY_GROUP)
+          .addDocFooterParagraph(annotatedByDefaultDocFooter(name));
     }
 
     private Group createMemberBindingGroup() {
@@ -695,16 +689,26 @@ public class KeepItemAnnotationGenerator {
                   .defaultEmptyString());
     }
 
+    private Group createMemberAnnotatedByGroup() {
+      String name = "member";
+      return createAnnotatedByPatternGroup(name, MEMBER_ANNOTATED_BY_GROUP)
+          .addDocFooterParagraph(getMutuallyExclusiveForMemberProperties())
+          .addDocFooterParagraph(annotatedByDefaultDocFooter(name));
+    }
+
     private Group createMemberAccessGroup() {
       return new Group("member-access")
           .addMember(
               new GroupMember("memberAccess")
                   .setDocTitle("Define the member-access pattern by matching on access flags.")
-                  .addParagraph(
-                      "Mutually exclusive with all field and method properties",
-                      "as use restricts the match to both types of members.")
+                  .addParagraph(getMutuallyExclusiveForMemberProperties())
                   .setDocReturn("The member access-flag constraints that must be met.")
                   .defaultArrayEmpty(MemberAccessFlags.class));
+    }
+
+    private String getMutuallyExclusiveForMemberProperties() {
+      return "Mutually exclusive with all field and method properties "
+          + "as use restricts the match to both types of members.";
     }
 
     private String getMutuallyExclusiveForMethodProperties() {
@@ -725,6 +729,13 @@ public class KeepItemAnnotationGenerator {
       return "If none, and other properties define this item as a field, the default matches "
           + suffix
           + ".";
+    }
+
+    private Group createMethodAnnotatedByGroup() {
+      String name = "method";
+      return createAnnotatedByPatternGroup(name, METHOD_ANNOTATED_BY_GROUP)
+          .addDocFooterParagraph(getMutuallyExclusiveForMethodProperties())
+          .addDocFooterParagraph(annotatedByDefaultDocFooter(name));
     }
 
     private Group createMethodAccessGroup() {
@@ -802,6 +813,13 @@ public class KeepItemAnnotationGenerator {
                   .defaultArrayValue(TypePattern.class, DEFAULT_INVALID_TYPE_PATTERN));
     }
 
+    private Group createFieldAnnotatedByGroup() {
+      String name = "field";
+      return createAnnotatedByPatternGroup(name, FIELD_ANNOTATED_BY_GROUP)
+          .addDocFooterParagraph(getMutuallyExclusiveForFieldProperties())
+          .addDocFooterParagraph(annotatedByDefaultDocFooter(name));
+    }
+
     private Group createFieldAccessGroup() {
       return new Group("field-access")
           .addMember(
@@ -870,13 +888,17 @@ public class KeepItemAnnotationGenerator {
         Group bindingGroup = createClassBindingGroup();
         Group classNameGroup = createClassNamePatternGroup();
         Group classInstanceOfGroup = createClassInstanceOfPatternGroup();
-        bindingGroup.addMutuallyExclusiveGroups(classNameGroup, classInstanceOfGroup);
+        Group classAnnotatedByGroup = createClassAnnotatedByPatternGroup();
+        bindingGroup.addMutuallyExclusiveGroups(
+            classNameGroup, classInstanceOfGroup, classAnnotatedByGroup);
 
         bindingGroup.generate(this);
         println();
         classNameGroup.generate(this);
         println();
         classInstanceOfGroup.generate(this);
+        println();
+        classAnnotatedByGroup.generate(this);
         println();
       }
 
@@ -905,10 +927,14 @@ public class KeepItemAnnotationGenerator {
 
     private void internalGenerateMemberPropertiesNoBinding(Group memberBindingGroup) {
       // General member properties.
+      maybeLink(createMemberAnnotatedByGroup(), memberBindingGroup).generate(this);
+      println();
       maybeLink(createMemberAccessGroup(), memberBindingGroup).generate(this);
       println();
 
       // Method properties.
+      maybeLink(createMethodAnnotatedByGroup(), memberBindingGroup).generate(this);
+      println();
       maybeLink(createMethodAccessGroup(), memberBindingGroup).generate(this);
       println();
       maybeLink(createMethodNameGroup(), memberBindingGroup).generate(this);
@@ -919,6 +945,8 @@ public class KeepItemAnnotationGenerator {
       println();
 
       // Field properties.
+      maybeLink(createFieldAnnotatedByGroup(), memberBindingGroup).generate(this);
+      println();
       maybeLink(createFieldAccessGroup(), memberBindingGroup).generate(this);
       println();
       maybeLink(createFieldNameGroup(), memberBindingGroup).generate(this);
@@ -1266,7 +1294,7 @@ public class KeepItemAnnotationGenerator {
                         + " if annotating a member.")
                 .generate(this);
             println();
-            constraints().generate(this);
+            getKeepConstraintsGroup().generate(this);
             println();
             generateMemberPropertiesNoBinding();
           });
@@ -1434,14 +1462,18 @@ public class KeepItemAnnotationGenerator {
             // Classes.
             createClassNamePatternGroup().generateConstants(this);
             createClassInstanceOfPatternGroup().generateConstants(this);
+            createClassAnnotatedByPatternGroup().generateConstants(this);
             // Members.
+            createMemberAnnotatedByGroup().generateConstants(this);
             createMemberAccessGroup().generateConstants(this);
             // Methods.
+            createMethodAnnotatedByGroup().generateConstants(this);
             createMethodAccessGroup().generateConstants(this);
             createMethodNameGroup().generateConstants(this);
             createMethodReturnTypeGroup().generateConstants(this);
             createMethodParametersGroup().generateConstants(this);
             // Fields.
+            createFieldAnnotatedByGroup().generateConstants(this);
             createFieldAccessGroup().generateConstants(this);
             createFieldNameGroup().generateConstants(this);
             createFieldTypeGroup().generateConstants(this);

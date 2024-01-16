@@ -79,9 +79,22 @@ public final class AnnotationConstants {
     public static final String instanceOfClassConstant = "instanceOfClassConstant";
     public static final String instanceOfClassConstantExclusive =
         "instanceOfClassConstantExclusive";
-    public static final String extendsClassName = "extendsClassName";
-    public static final String extendsClassConstant = "extendsClassConstant";
+    public static final String classAnnotatedByGroup = "class-annotated-by";
+    public static final String classAnnotatedByClassName = "classAnnotatedByClassName";
+    public static final String classAnnotatedByClassConstant = "classAnnotatedByClassConstant";
+    public static final String classAnnotatedByClassNamePattern =
+        "classAnnotatedByClassNamePattern";
+    public static final String memberAnnotatedByGroup = "member-annotated-by";
+    public static final String memberAnnotatedByClassName = "memberAnnotatedByClassName";
+    public static final String memberAnnotatedByClassConstant = "memberAnnotatedByClassConstant";
+    public static final String memberAnnotatedByClassNamePattern =
+        "memberAnnotatedByClassNamePattern";
     public static final String memberAccess = "memberAccess";
+    public static final String methodAnnotatedByGroup = "method-annotated-by";
+    public static final String methodAnnotatedByClassName = "methodAnnotatedByClassName";
+    public static final String methodAnnotatedByClassConstant = "methodAnnotatedByClassConstant";
+    public static final String methodAnnotatedByClassNamePattern =
+        "methodAnnotatedByClassNamePattern";
     public static final String methodAccess = "methodAccess";
     public static final String methodNameGroup = "method-name";
     public static final String methodName = "methodName";
@@ -93,6 +106,11 @@ public final class AnnotationConstants {
     public static final String parametersGroup = "parameters";
     public static final String methodParameters = "methodParameters";
     public static final String methodParameterTypePatterns = "methodParameterTypePatterns";
+    public static final String fieldAnnotatedByGroup = "field-annotated-by";
+    public static final String fieldAnnotatedByClassName = "fieldAnnotatedByClassName";
+    public static final String fieldAnnotatedByClassConstant = "fieldAnnotatedByClassConstant";
+    public static final String fieldAnnotatedByClassNamePattern =
+        "fieldAnnotatedByClassNamePattern";
     public static final String fieldAccess = "fieldAccess";
     public static final String fieldNameGroup = "field-name";
     public static final String fieldName = "fieldName";
@@ -120,8 +138,7 @@ public final class AnnotationConstants {
     public static final String kind = "kind";
     public static final String constraintsGroup = "constraints";
     public static final String constraints = "constraints";
-    public static final String allow = "allow";
-    public static final String disallow = "disallow";
+    public static final String constraintAdditions = "constraintAdditions";
   }
 
   public static final class Kind {
@@ -143,6 +160,7 @@ public final class AnnotationConstants {
     public static final String NAME = "NAME";
     public static final String VISIBILITY_RELAX = "VISIBILITY_RELAX";
     public static final String VISIBILITY_RESTRICT = "VISIBILITY_RESTRICT";
+    public static final String VISIBILITY_INVARIANT = "VISIBILITY_INVARIANT";
     public static final String CLASS_INSTANTIATE = "CLASS_INSTANTIATE";
     public static final String METHOD_INVOKE = "METHOD_INVOKE";
     public static final String FIELD_GET = "FIELD_GET";

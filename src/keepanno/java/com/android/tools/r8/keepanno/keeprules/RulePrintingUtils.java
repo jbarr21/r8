@@ -28,6 +28,7 @@ import com.android.tools.r8.keepanno.ast.KeepStringPattern;
 import com.android.tools.r8.keepanno.ast.KeepTypePattern;
 import com.android.tools.r8.keepanno.ast.KeepUnqualfiedClassNamePattern;
 import com.android.tools.r8.keepanno.ast.ModifierPattern;
+import com.android.tools.r8.keepanno.ast.OptionalPattern;
 import com.android.tools.r8.keepanno.utils.Unimplemented;
 import java.util.List;
 import java.util.Set;
@@ -39,6 +40,7 @@ public abstract class RulePrintingUtils {
   public static final String KEEP = "-keep";
   public static final String KEEP_CLASS_MEMBERS = "-keepclassmembers";
   public static final String KEEP_CLASSES_WITH_MEMBERS = "-keepclasseswithmembers";
+  public static final String KEEP_ATTRIBUTES = "-keepattributes";
   public static final String CHECK_DISCARD = "-checkdiscard";
 
   public static void printHeader(StringBuilder builder, KeepEdgeMetaInfo metaInfo) {
@@ -98,6 +100,13 @@ public abstract class RulePrintingUtils {
       StringBuilder builder,
       KeepClassItemPattern classPattern,
       BiConsumer<StringBuilder, KeepQualifiedClassNamePattern> printClassName) {
+    OptionalPattern<KeepQualifiedClassNamePattern> annotatedByPattern =
+        classPattern.getAnnotatedByPattern();
+    if (annotatedByPattern.isPresent()) {
+      builder.append("@");
+      printClassName(annotatedByPattern.get(), RulePrinter.withoutBackReferences(builder));
+      builder.append(" ");
+    }
     builder.append("class ");
     printClassName.accept(builder, classPattern.getClassNamePattern());
     KeepInstanceOfPattern extendsPattern = classPattern.getInstanceOfPattern();
@@ -115,6 +124,11 @@ public abstract class RulePrintingUtils {
       // members via a binding must be split in two up front: one for methods and one for fields.
       return printer.appendWithoutBackReferenceAssert("*").append(";");
     }
+    if (member.getAnnotatedByPattern().isPresent()) {
+      printer.append("@");
+      printClassName(member.getAnnotatedByPattern().get(), printer);
+      printer.append(" ");
+    }
     if (member.isMethod()) {
       return printMethod(member.asMethod(), printer);
     }
@@ -122,27 +136,27 @@ public abstract class RulePrintingUtils {
       return printField(member.asField(), printer);
     }
     // The pattern is a restricted member pattern, e.g., it must apply to fields and methods
-    // without any specifics not common to both. For now that is just the access pattern.
-    assert !member.getAccessPattern().isAny();
+    // without any specifics not common to both. For now that is annotated-by and access patterns.
+    assert !member.getAccessPattern().isAny() || member.getAnnotatedByPattern().isPresent();
     printMemberAccess(printer, member.getAccessPattern());
     return printer.appendWithoutBackReferenceAssert("*").append(";");
   }
 
-  private static RulePrinter printField(KeepFieldPattern fieldPattern, RulePrinter builder) {
-    printFieldAccess(builder, fieldPattern.getAccessPattern());
-    printType(builder, fieldPattern.getTypePattern().asType());
-    builder.append(" ");
-    printFieldName(builder, fieldPattern.getNamePattern());
-    return builder.append(";");
+  private static RulePrinter printField(KeepFieldPattern fieldPattern, RulePrinter printer) {
+    printFieldAccess(printer, fieldPattern.getAccessPattern());
+    printType(printer, fieldPattern.getTypePattern().asType());
+    printer.append(" ");
+    printFieldName(printer, fieldPattern.getNamePattern());
+    return printer.append(";");
   }
 
-  private static RulePrinter printMethod(KeepMethodPattern methodPattern, RulePrinter builder) {
-    printMethodAccess(builder, methodPattern.getAccessPattern());
-    printReturnType(builder, methodPattern.getReturnTypePattern());
-    builder.append(" ");
-    printMethodName(builder, methodPattern.getNamePattern());
-    printParameters(builder, methodPattern.getParametersPattern());
-    return builder.append(";");
+  private static RulePrinter printMethod(KeepMethodPattern methodPattern, RulePrinter printer) {
+    printMethodAccess(printer, methodPattern.getAccessPattern());
+    printReturnType(printer, methodPattern.getReturnTypePattern());
+    printer.append(" ");
+    printMethodName(printer, methodPattern.getNamePattern());
+    printParameters(printer, methodPattern.getParametersPattern());
+    return printer.append(";");
   }
 
   private static RulePrinter printParameters(
