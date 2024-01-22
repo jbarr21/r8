@@ -110,6 +110,22 @@ public @interface KeepTarget {
   KeepConstraint[] constraintAdditions() default {};
 
   /**
+   * Patterns for annotations that must remain on the item.
+   *
+   * <p>The annotations matching any of the patterns must remain on the item if the annotation types
+   * remain in the program.
+   *
+   * <p>Note that if the annotation types themselves are unused/removed, then their references on
+   * the item will be removed too. If the annotation types themselves are used reflectively then
+   * they too need a keep annotation or rule to ensure they remain in the program.
+   *
+   * <p>By default no annotation patterns are defined and no annotations are required to remain.
+   *
+   * @return Annotation patterns
+   */
+  AnnotationPattern[] constrainAnnotations() default {};
+
+  /**
    * Define the class pattern by reference to a binding.
    *
    * <p>Mutually exclusive with the following other properties defining class:

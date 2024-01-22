@@ -8,11 +8,13 @@ import static com.android.tools.r8.utils.MapUtils.ignoreKey;
 
 import com.android.tools.r8.classmerging.ClassMergerGraphLens;
 import com.android.tools.r8.graph.AppView;
+import com.android.tools.r8.graph.DexClass;
 import com.android.tools.r8.graph.DexEncodedField;
 import com.android.tools.r8.graph.DexEncodedMethod;
 import com.android.tools.r8.graph.DexField;
 import com.android.tools.r8.graph.DexMethod;
 import com.android.tools.r8.graph.DexProgramClass;
+import com.android.tools.r8.graph.DexReference;
 import com.android.tools.r8.graph.DexType;
 import com.android.tools.r8.graph.ProgramMethod;
 import com.android.tools.r8.graph.lens.GraphLens;
@@ -22,6 +24,9 @@ import com.android.tools.r8.graph.proto.RewrittenPrototypeDescription;
 import com.android.tools.r8.ir.code.InvokeType;
 import com.android.tools.r8.ir.conversion.ExtraParameter;
 import com.android.tools.r8.ir.conversion.ExtraUnusedNullParameter;
+import com.android.tools.r8.shaking.AppInfoWithLiveness;
+import com.android.tools.r8.shaking.KeepInfoCollection;
+import com.android.tools.r8.utils.InternalOptions;
 import com.android.tools.r8.utils.IterableUtils;
 import com.android.tools.r8.utils.collections.BidirectionalManyToOneRepresentativeHashMap;
 import com.android.tools.r8.utils.collections.BidirectionalManyToOneRepresentativeMap;
@@ -283,7 +288,10 @@ public class VerticalClassMergerGraphLens extends ClassMergerGraphLens {
     }
     if (type.isInterface()
         && mergedClasses.hasInterfaceBeenMergedIntoClass(previousMethod.getHolderType())) {
-      return InvokeType.VIRTUAL;
+      DexClass newMethodHolder = appView.definitionForHolder(newMethod);
+      if (newMethodHolder != null && !newMethodHolder.isInterface()) {
+        return InvokeType.VIRTUAL;
+      }
     }
     return type;
   }
@@ -307,6 +315,29 @@ public class VerticalClassMergerGraphLens extends ClassMergerGraphLens {
     assert contextualSuperToImplementationInContexts.values().stream()
         .noneMatch(virtualToDirectMethodMap -> virtualToDirectMethodMap.containsKey(previous));
     return true;
+  }
+
+  public boolean assertPinnedNotModified(AppView<AppInfoWithLiveness> appView) {
+    KeepInfoCollection keepInfo = appView.getKeepInfo();
+    InternalOptions options = appView.options();
+    keepInfo.forEachPinnedType(this::assertReferenceNotModified, options);
+    keepInfo.forEachPinnedMethod(this::assertReferenceNotModified, options);
+    keepInfo.forEachPinnedField(this::assertReferenceNotModified, options);
+    return true;
+  }
+
+  private void assertReferenceNotModified(DexReference reference) {
+    if (reference.isDexField()) {
+      DexField field = reference.asDexField();
+      assert getNextFieldSignature(field).isIdenticalTo(field);
+    } else if (reference.isDexMethod()) {
+      DexMethod method = reference.asDexMethod();
+      assert getNextMethodSignature(method).isIdenticalTo(method);
+    } else {
+      assert reference.isDexType();
+      DexType type = reference.asDexType();
+      assert getNextClassType(type).isIdenticalTo(type);
+    }
   }
 
   public static class Builder
@@ -467,13 +498,6 @@ public class VerticalClassMergerGraphLens extends ClassMergerGraphLens {
           extraNewMethodSignatures,
           mergedMethods,
           staticizedMethods);
-    }
-
-    // TODO: should be removed.
-    public boolean hasMappingForSignatureInContext(DexProgramClass context, DexMethod signature) {
-      return contextualSuperToImplementationInContexts
-          .getOrDefault(context.getType(), Collections.emptyMap())
-          .containsKey(signature);
     }
 
     public void markMethodAsMerged(DexEncodedMethod method) {

@@ -46,7 +46,7 @@ public class TrivialCheckCastAndInstanceOfRemover extends CodeRewriterPass<AppIn
   }
 
   @Override
-  protected boolean shouldRewriteCode(IRCode code) {
+  protected boolean shouldRewriteCode(IRCode code, MethodProcessor methodProcessor) {
     return appView.enableWholeProgramOptimizations()
         && appView.options().testing.enableCheckCastAndInstanceOfRemoval
         && (code.metadata().mayHaveCheckCast() || code.metadata().mayHaveInstanceOf());
@@ -231,7 +231,8 @@ public class TrivialCheckCastAndInstanceOfRemover extends CodeRewriterPass<AppIn
     // type.
     if (castType.isClassType()
         && castType.isAlwaysNull(appViewWithLiveness)
-        && !outValue.hasDebugUsers()) {
+        && !outValue.hasDebugUsers()
+        && !appView.getSyntheticItems().isFinalized()) {
       // Replace all usages of the out-value by null.
       it.previous();
       Value nullValue = it.insertConstNullInstruction(code, options);

@@ -101,6 +101,7 @@ public class AppView<T extends AppInfo> implements DexDefinitionSupplier, Librar
   private final WholeProgramOptimizations wholeProgramOptimizations;
   private GraphLens codeLens = GraphLens.getIdentityLens();
   private GraphLens graphLens = GraphLens.getIdentityLens();
+  private GraphLens genericSignaturesLens = GraphLens.getIdentityLens();
   private InitClassLens initClassLens;
   private GraphLens kotlinMetadataLens = GraphLens.getIdentityLens();
   private NamingLens namingLens = NamingLens.getIdentityLens();
@@ -678,6 +679,14 @@ public class AppView<T extends AppInfo> implements DexDefinitionSupplier, Librar
     return false;
   }
 
+  public GraphLens getGenericSignaturesLens() {
+    return genericSignaturesLens;
+  }
+
+  public void setGenericSignaturesLens(GraphLens genericSignaturesLens) {
+    this.genericSignaturesLens = genericSignaturesLens;
+  }
+
   private boolean disallowFurtherInitClassUses = false;
 
   public void dissallowFurtherInitClassUses() {
@@ -871,7 +880,6 @@ public class AppView<T extends AppInfo> implements DexDefinitionSupplier, Librar
       testing().verticallyMergedClassesConsumer.accept(dexItemFactory(), verticallyMergedClasses);
     } else {
       assert this.verticallyMergedClasses != null;
-      assert verticallyMergedClasses.isEmpty();
     }
   }
 
@@ -1088,7 +1096,10 @@ public class AppView<T extends AppInfo> implements DexDefinitionSupplier, Librar
                 public void run(Timing timing) {
                   if (appView.hasLiveness()) {
                     result =
-                        appView.appInfoWithLiveness().rewrittenWithLens(application, lens, timing);
+                        appView
+                            .appInfoWithLiveness()
+                            .rewrittenWithLens(
+                                application, lens, appliedLensInModifiedLens, timing);
                   } else {
                     assert appView.hasClassHierarchy();
                     AppView<AppInfoWithClassHierarchy> appViewWithClassHierarchy =
@@ -1245,6 +1256,23 @@ public class AppView<T extends AppInfo> implements DexDefinitionSupplier, Librar
                 @Override
                 public boolean shouldRun() {
                   return !appView.getStartupProfile().isEmpty();
+                }
+              },
+              new ThreadTask() {
+                @Override
+                public void run(Timing timing) {
+                  ImmutableSet.Builder<DexMethod> cfByteCodePassThroughBuilder =
+                      ImmutableSet.builder();
+                  for (DexMethod method : appView.cfByteCodePassThrough) {
+                    cfByteCodePassThroughBuilder.add(
+                        lens.getRenamedMethodSignature(method, appliedLensInModifiedLens));
+                  }
+                  appView.cfByteCodePassThrough = cfByteCodePassThroughBuilder.build();
+                }
+
+                @Override
+                public boolean shouldRun() {
+                  return !appView.cfByteCodePassThrough.isEmpty();
                 }
               });
         });

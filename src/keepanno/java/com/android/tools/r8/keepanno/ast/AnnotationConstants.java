@@ -139,6 +139,7 @@ public final class AnnotationConstants {
     public static final String constraintsGroup = "constraints";
     public static final String constraints = "constraints";
     public static final String constraintAdditions = "constraintAdditions";
+    public static final String constrainAnnotations = "constrainAnnotations";
   }
 
   public static final class Kind {
@@ -169,7 +170,6 @@ public final class AnnotationConstants {
     public static final String FIELD_REPLACE = "FIELD_REPLACE";
     public static final String NEVER_INLINE = "NEVER_INLINE";
     public static final String CLASS_OPEN_HIERARCHY = "CLASS_OPEN_HIERARCHY";
-    public static final String ANNOTATIONS = "ANNOTATIONS";
   }
 
   public static final class Option {
@@ -235,5 +235,15 @@ public final class AnnotationConstants {
         "Lcom/android/tools/r8/keepanno/annotations/ClassNamePattern;";
     public static final String simpleName = "simpleName";
     public static final String packageName = "packageName";
+  }
+
+  public static final class AnnotationPattern {
+    public static final String DESCRIPTOR =
+        "Lcom/android/tools/r8/keepanno/annotations/AnnotationPattern;";
+    public static final String annotationNameGroup = "annotation-name";
+    public static final String name = "name";
+    public static final String constant = "constant";
+    public static final String namePattern = "namePattern";
+    public static final String retention = "retention";
   }
 }

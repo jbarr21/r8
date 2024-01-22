@@ -20,6 +20,10 @@ import com.android.tools.r8.graph.DexTypeList;
 import com.android.tools.r8.graph.DexValue;
 import com.android.tools.r8.graph.MethodAccessFlags;
 import com.android.tools.r8.graph.ProgramMethod;
+import com.android.tools.r8.graph.UseRegistry.MethodHandleUse;
+import com.android.tools.r8.graph.lens.GraphLens;
+import com.android.tools.r8.ir.conversion.LensCodeRewriterUtils;
+import com.android.tools.r8.utils.SetUtils;
 import com.google.common.collect.Sets;
 import java.util.ArrayList;
 import java.util.List;
@@ -39,13 +43,11 @@ public final class LambdaDescriptor {
 
   final String uniqueId;
   final DexMethod mainMethod;
-  public final DexString name;
-  final DexProto erasedProto;
   final DexProto enforcedProto;
   public final DexMethodHandle implHandle;
 
-  public final List<DexType> interfaces = new ArrayList<>();
-  public final Set<DexProto> bridges = Sets.newIdentityHashSet();
+  public final List<DexType> interfaces;
+  public final Set<DexProto> bridges;
   public final DexTypeList captures;
 
   // Used for accessibility analysis and few assertions only.
@@ -53,19 +55,19 @@ public final class LambdaDescriptor {
   private final DexType targetHolder;
 
   private LambdaDescriptor() {
-    uniqueId = null;
-    name = null;
-    erasedProto = null;
-    enforcedProto = null;
-    implHandle = null;
-    captures = null;
-    targetAccessFlags = null;
-    targetHolder = null;
-    mainMethod = null;
+    this(null, null, null, null, null, null, null, null, null);
+  }
+
+  public DexProto getErasedProto() {
+    return mainMethod.getProto();
   }
 
   public DexMethod getMainMethod() {
     return mainMethod;
+  }
+
+  public DexString getName() {
+    return mainMethod.getName();
   }
 
   private LambdaDescriptor(
@@ -89,12 +91,11 @@ public final class LambdaDescriptor {
     assert captures != null;
     this.mainMethod = appInfo.dexItemFactory().createMethod(mainInterface, erasedProto, name);
     this.uniqueId = callSite.getHash();
-    this.name = name;
-    this.erasedProto = erasedProto;
     this.enforcedProto = enforcedProto;
     this.implHandle = implHandle;
     this.captures = captures;
-
+    this.bridges = Sets.newIdentityHashSet();
+    this.interfaces = new ArrayList<>();
     this.interfaces.add(mainInterface);
     DexClassAndMethod targetMethod =
         context == null ? null : lookupTargetMethod(appView, appInfo, context);
@@ -105,6 +106,27 @@ public final class LambdaDescriptor {
       targetAccessFlags = null;
       targetHolder = null;
     }
+  }
+
+  private LambdaDescriptor(
+      String uniqueId,
+      DexMethod mainMethod,
+      DexProto enforcedProto,
+      DexMethodHandle implHandle,
+      List<DexType> interfaces,
+      Set<DexProto> bridges,
+      DexTypeList captures,
+      MethodAccessFlags targetAccessFlags,
+      DexType targetHolder) {
+    this.uniqueId = uniqueId;
+    this.mainMethod = mainMethod;
+    this.enforcedProto = enforcedProto;
+    this.implHandle = implHandle;
+    this.interfaces = interfaces;
+    this.bridges = bridges;
+    this.captures = captures;
+    this.targetAccessFlags = targetAccessFlags;
+    this.targetHolder = targetHolder;
   }
 
   final DexType getImplReceiverType() {
@@ -179,7 +201,7 @@ public final class LambdaDescriptor {
     return method.getDefinition().isPublicized() && isInstanceMethod(method);
   }
 
-  public final boolean verifyTargetFoundInClass(DexType type) {
+  public boolean verifyTargetFoundInClass(DexType type) {
     return targetHolder.isIdenticalTo(type);
   }
 
@@ -189,14 +211,15 @@ public final class LambdaDescriptor {
   }
 
   public void forEachErasedAndEnforcedTypes(BiConsumer<DexType, DexType> consumer) {
-    consumer.accept(erasedProto.returnType, enforcedProto.returnType);
+    DexProto erasedProto = getErasedProto();
+    consumer.accept(erasedProto.getReturnType(), enforcedProto.getReturnType());
     for (int i = 0; i < enforcedProto.getArity(); i++) {
       consumer.accept(erasedProto.getParameter(i), enforcedProto.getParameter(i));
     }
   }
 
   /** Is a stateless lambda, i.e. lambda does not capture any values */
-  final boolean isStateless() {
+  boolean isStateless() {
     return captures.isEmpty();
   }
 
@@ -494,5 +517,33 @@ public final class LambdaDescriptor {
     }
 
     return false;
+  }
+
+  public LambdaDescriptor rewrittenWithLens(
+      GraphLens lens, GraphLens appliedLens, LensCodeRewriterUtils rewriter) {
+    String newUniqueId = uniqueId;
+    DexMethod newMainMethod = lens.getRenamedMethodSignature(mainMethod, appliedLens);
+    DexProto newEnforcedProto = rewriter.rewriteProto(enforcedProto);
+    DexMethodHandle newImplHandle =
+        rewriter.rewriteDexMethodHandle(
+            implHandle, MethodHandleUse.ARGUMENT_TO_LAMBDA_METAFACTORY, mainMethod);
+    List<DexType> newInterfaces =
+        new ArrayList<>(
+            SetUtils.mapLinkedHashSet(interfaces, itf -> lens.lookupType(itf, appliedLens)));
+    Set<DexProto> newBridges = SetUtils.mapIdentityHashSet(bridges, rewriter::rewriteProto);
+    DexTypeList newCaptures = captures.map(capture -> lens.lookupType(capture, appliedLens));
+    MethodAccessFlags newTargetAccessFlags = targetAccessFlags;
+    DexType newTargetHolder =
+        targetHolder != null ? lens.lookupType(targetHolder, appliedLens) : null;
+    return new LambdaDescriptor(
+        newUniqueId,
+        newMainMethod,
+        newEnforcedProto,
+        newImplHandle,
+        newInterfaces,
+        newBridges,
+        newCaptures,
+        newTargetAccessFlags,
+        newTargetHolder);
   }
 }

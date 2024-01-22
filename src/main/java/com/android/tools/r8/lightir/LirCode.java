@@ -36,6 +36,7 @@ import com.android.tools.r8.lightir.LirConstant.LirConstantStructuralAcceptor;
 import com.android.tools.r8.origin.Origin;
 import com.android.tools.r8.utils.ArrayUtils;
 import com.android.tools.r8.utils.ComparatorUtils;
+import com.android.tools.r8.utils.FastMapUtils;
 import com.android.tools.r8.utils.IntBox;
 import com.android.tools.r8.utils.InternalOptions;
 import com.android.tools.r8.utils.RetracerForCodePrinting;
@@ -198,6 +199,15 @@ public class LirCode<EV> extends Code
     @Override
     public StructuralMapping<TryCatchTable> getStructuralMapping() {
       return TryCatchTable::specify;
+    }
+
+    public TryCatchTable rewriteWithLens(GraphLens graphLens, GraphLens codeLens) {
+      Int2ReferenceMap<CatchHandlers<Integer>> newTryCatchHandlers =
+          FastMapUtils.mapInt2ReferenceOpenHashMapOrElse(
+              tryCatchHandlers,
+              (block, blockHandlers) -> blockHandlers.rewriteWithLens(graphLens, codeLens),
+              null);
+      return newTryCatchHandlers != null ? new TryCatchTable(newTryCatchHandlers) : this;
     }
 
     private static void specify(StructuralSpecification<TryCatchTable, ?> spec) {
@@ -768,6 +778,24 @@ public class LirCode<EV> extends Code
         instructions,
         instructionCount,
         tryCatchTable,
+        debugLocalInfoTable,
+        strategyInfo,
+        useDexEstimationStrategy,
+        metadataMap);
+  }
+
+  public LirCode<EV> newCodeWithRewrittenTryCatchTable(TryCatchTable rewrittenTryCatchTable) {
+    if (rewrittenTryCatchTable == tryCatchTable) {
+      return this;
+    }
+    return new LirCode<>(
+        irMetadata,
+        constants,
+        positionTable,
+        argumentCount,
+        instructions,
+        instructionCount,
+        rewrittenTryCatchTable,
         debugLocalInfoTable,
         strategyInfo,
         useDexEstimationStrategy,
