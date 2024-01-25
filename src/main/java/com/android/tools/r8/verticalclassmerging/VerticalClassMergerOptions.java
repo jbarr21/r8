@@ -21,7 +21,8 @@ public class VerticalClassMergerOptions {
   }
 
   public boolean isEnabled(ClassMergerMode mode) {
-    return enabled && options.isOptimizing() && options.isShrinking() && mode.isInitial();
+    assert mode != null;
+    return enabled && options.isOptimizing() && options.isShrinking();
   }
 
   public void setEnabled(boolean enabled) {

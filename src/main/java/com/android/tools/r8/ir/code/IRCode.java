@@ -4,6 +4,8 @@
 package com.android.tools.r8.ir.code;
 
 import static com.android.tools.r8.ir.analysis.type.Nullability.definitelyNotNull;
+import static com.android.tools.r8.utils.ConsumerUtils.emptyConsumer;
+import static com.google.common.base.Predicates.alwaysFalse;
 
 import com.android.tools.r8.errors.Unreachable;
 import com.android.tools.r8.graph.AppInfoWithClassHierarchy;
@@ -1312,11 +1314,11 @@ public class IRCode implements IRControlFlowGraph, ValueFactory {
     return removeAllDeadAndTrivialPhis(builder, null);
   }
 
-  public boolean removeAllDeadAndTrivialPhis(Set<Value> affectedValues) {
+  public boolean removeAllDeadAndTrivialPhis(AffectedValues affectedValues) {
     return removeAllDeadAndTrivialPhis(null, affectedValues);
   }
 
-  public boolean removeAllDeadAndTrivialPhis(IRBuilder builder, Set<Value> affectedValues) {
+  public boolean removeAllDeadAndTrivialPhis(IRBuilder builder, AffectedValues affectedValues) {
     boolean anyPhisRemoved = false;
     for (BasicBlock block : blocks) {
       List<Phi> phis = new ArrayList<>(block.getPhis());
@@ -1326,7 +1328,8 @@ public class IRCode implements IRControlFlowGraph, ValueFactory {
           reachablePhis.getSeenSet().forEach(Phi::removeDeadPhi);
           anyPhisRemoved = true;
         } else {
-          anyPhisRemoved |= phi.removeTrivialPhi(builder, affectedValues);
+          anyPhisRemoved |=
+              phi.removeTrivialPhi(builder, affectedValues, emptyConsumer(), alwaysFalse());
         }
       }
     }
@@ -1505,18 +1508,24 @@ public class IRCode implements IRControlFlowGraph, ValueFactory {
 
   public AffectedValues removeUnreachableBlocks() {
     AffectedValues affectedValues = new AffectedValues();
+    removeUnreachableBlocks(affectedValues, emptyConsumer());
+    return affectedValues;
+  }
+
+  public void removeUnreachableBlocks(
+      AffectedValues affectedValues, Consumer<Value> prunedValueConsumer) {
     int color = reserveMarkingColor();
     markTransitiveSuccessors(entryBlock(), color);
     ListIterator<BasicBlock> blockIterator = listIterator();
     while (blockIterator.hasNext()) {
       BasicBlock current = blockIterator.next();
       if (!current.isMarked(color)) {
-        affectedValues.addAll(current.cleanForRemoval());
+        current.cleanForRemoval(
+            affectedValues, prunedValueConsumer, block -> !block.isMarked(color));
         blockIterator.remove();
       }
     }
     returnMarkingColor(color);
-    return affectedValues;
   }
 
   // Note: It is the responsibility of the caller to return the marking color.

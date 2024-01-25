@@ -552,7 +552,7 @@ public class BasicBlockInstructionListIterator implements InstructionListIterato
       BasicBlockIterator blockIterator,
       Value exceptionValue,
       Set<BasicBlock> blocksToRemove,
-      Set<Value> affectedValues) {
+      AffectedValues affectedValues) {
     if (current == null) {
       throw new IllegalStateException();
     }
@@ -613,7 +613,7 @@ public class BasicBlockInstructionListIterator implements InstructionListIterato
       IRCode code,
       ListIterator<BasicBlock> blockIterator,
       Set<BasicBlock> blocksToRemove,
-      Set<Value> affectedValues) {
+      AffectedValues affectedValues) {
     if (current == null) {
       throw new IllegalStateException();
     }
@@ -1053,7 +1053,7 @@ public class BasicBlockInstructionListIterator implements InstructionListIterato
     if (normalExits.isEmpty()) {
       assert inlineeCanThrow;
       DominatorTree dominatorTree = new DominatorTree(code, MAY_HAVE_UNREACHABLE_BLOCKS);
-      Set<Value> affectedValues = Sets.newIdentityHashSet();
+      AffectedValues affectedValues = new AffectedValues();
       blocksToRemove.addAll(invokePredecessor.unlink(invokeBlock, dominatorTree, affectedValues));
       new TypeAnalysis(appView, code)
           .setKeepRedundantBlocksAfterAssumeRemoval(true)

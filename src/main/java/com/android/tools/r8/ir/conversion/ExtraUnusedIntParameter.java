@@ -7,9 +7,8 @@ import com.android.tools.r8.graph.AppView;
 import com.android.tools.r8.graph.DexItemFactory;
 import com.android.tools.r8.graph.DexType;
 import com.android.tools.r8.ir.analysis.type.TypeElement;
-import com.android.tools.r8.ir.analysis.value.SingleNumberValue;
 
-public class ExtraUnusedIntParameter extends ExtraParameter {
+public class ExtraUnusedIntParameter extends ExtraUnusedPrimitiveParameter {
 
   @Override
   public DexType getType(DexItemFactory dexItemFactory) {
@@ -19,26 +18,5 @@ public class ExtraUnusedIntParameter extends ExtraParameter {
   @Override
   public TypeElement getTypeElement(AppView<?> appView, DexType argType) {
     return TypeElement.getInt();
-  }
-
-  @Override
-  public SingleNumberValue getValue(AppView<?> appView) {
-    return appView.abstractValueFactory().createZeroValue();
-  }
-
-  @Override
-  public boolean isUnused() {
-    return true;
-  }
-
-  @Override
-  @SuppressWarnings("EqualsGetClass")
-  public boolean equals(Object obj) {
-    return obj != null && getClass() == obj.getClass();
-  }
-
-  @Override
-  public int hashCode() {
-    return 0;
   }
 }

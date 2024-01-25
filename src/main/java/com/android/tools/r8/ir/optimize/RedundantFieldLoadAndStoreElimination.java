@@ -4,8 +4,10 @@
 
 package com.android.tools.r8.ir.optimize;
 
+import static com.android.tools.r8.utils.ConsumerUtils.emptyConsumer;
 import static com.android.tools.r8.utils.MapUtils.ignoreKey;
 import static com.android.tools.r8.utils.PredicateUtils.not;
+import static com.google.common.base.Predicates.alwaysFalse;
 
 import com.android.tools.r8.errors.Unreachable;
 import com.android.tools.r8.graph.AppInfo;
@@ -48,7 +50,6 @@ import com.android.tools.r8.ir.optimize.info.field.InstanceFieldInitializationIn
 import com.android.tools.r8.ir.optimize.info.initializer.InstanceInitializerInfo;
 import com.android.tools.r8.shaking.AppInfoWithLiveness;
 import com.android.tools.r8.utils.ArrayUtils;
-import com.android.tools.r8.verticalclassmerging.VerticallyMergedClasses;
 import com.google.common.collect.Sets;
 import it.unimi.dsi.fastutil.objects.Reference2IntMap;
 import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
@@ -478,7 +479,8 @@ public class RedundantFieldLoadAndStoreElimination extends CodeRewriterPass<AppI
               affectedPhis.add(value.asPhi());
             }
           });
-      affectedPhis.forEach(phi -> phi.removeTrivialPhi(null, affectedValues));
+      affectedPhis.forEach(
+          phi -> phi.removeTrivialPhi(null, affectedValues, emptyConsumer(), alwaysFalse()));
       affectedValues.narrowingWithAssumeRemoval(appView, code);
       if (hasChanged) {
         code.removeRedundantBlocks();
@@ -508,10 +510,6 @@ public class RedundantFieldLoadAndStoreElimination extends CodeRewriterPass<AppI
     }
 
     private boolean verifyWasInstanceInitializer() {
-      VerticallyMergedClasses verticallyMergedClasses = appView.getVerticallyMergedClasses();
-      assert verticallyMergedClasses != null;
-      assert verticallyMergedClasses.isMergeTarget(method.getHolderType())
-          || appView.horizontallyMergedClasses().isMergeTarget(method.getHolderType());
       assert appView
           .dexItemFactory()
           .isConstructor(appView.graphLens().getOriginalMethodSignature(method.getReference()));

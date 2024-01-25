@@ -49,10 +49,16 @@ import java.util.function.Consumer;
 /** Extract the PG keep rules that over-approximate a keep edge. */
 public class KeepRuleExtractor {
 
+  private final KeepRuleExtractorOptions options;
   private final Consumer<String> ruleConsumer;
 
   public KeepRuleExtractor(Consumer<String> ruleConsumer) {
+    this(ruleConsumer, KeepRuleExtractorOptions.getR8Options());
+  }
+
+  public KeepRuleExtractor(Consumer<String> ruleConsumer, KeepRuleExtractorOptions options) {
     this.ruleConsumer = ruleConsumer;
+    this.options = options;
   }
 
   public void extract(KeepDeclaration declaration) {
@@ -60,20 +66,23 @@ public class KeepRuleExtractor {
     PgRule.groupByKinds(rules);
     StringBuilder builder = new StringBuilder();
     for (PgRule rule : rules) {
-      rule.printRule(builder);
+      rule.printRule(builder, options);
       builder.append("\n");
     }
     ruleConsumer.accept(builder.toString());
   }
 
-  private static List<PgRule> split(KeepDeclaration declaration) {
+  private List<PgRule> split(KeepDeclaration declaration) {
     if (declaration.isKeepCheck()) {
       return generateCheckRules(declaration.asKeepCheck());
     }
     return doSplit(KeepEdgeNormalizer.normalize(declaration.asKeepEdge()));
   }
 
-  private static List<PgRule> generateCheckRules(KeepCheck check) {
+  private List<PgRule> generateCheckRules(KeepCheck check) {
+    if (!options.hasCheckDiscardSupport()) {
+      return Collections.emptyList();
+    }
     KeepItemPattern itemPattern = check.getItemPattern();
     boolean isRemovedPattern = check.getKind() == KeepCheckKind.REMOVED;
     List<PgRule> rules = new ArrayList<>(isRemovedPattern ? 2 : 1);

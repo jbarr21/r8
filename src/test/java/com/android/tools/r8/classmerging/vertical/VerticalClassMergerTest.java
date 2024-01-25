@@ -288,8 +288,8 @@ public class VerticalClassMergerTest extends TestBase {
 
     // There should be three fields.
     assertThat(clazzSubject.field("java.lang.String", "name"), isPresent());
+    assertThat(clazzSubject.field("java.lang.String", "name$" + "1"), isPresent());
     assertThat(clazzSubject.field("java.lang.String", "name" + suffix), isPresent());
-    assertThat(clazzSubject.field("java.lang.String", "name" + suffix + "2"), isPresent());
 
     // The direct method "$r8$constructor$classmerging$ConflictInGeneratedNameTest$A" is processed
     // after the method "<init>" is renamed to exactly that name. Therefore the conflict should have
@@ -308,12 +308,12 @@ public class VerticalClassMergerTest extends TestBase {
     // There should be three baz's.
     assertThat(clazzSubject.method("void", "baz", EMPTY), isPresent());
     assertThat(clazzSubject.method("void", "baz" + suffix, EMPTY), isPresent());
-    assertThat(clazzSubject.method("void", "baz" + suffix + "2", EMPTY), isPresent());
+    assertThat(clazzSubject.method("void", "baz" + suffix + "$1", EMPTY), isPresent());
 
     // There should be three boo's.
     assertThat(clazzSubject.method("void", "boo", EMPTY), isPresent());
     assertThat(clazzSubject.method("void", "boo" + suffix, EMPTY), isPresent());
-    assertThat(clazzSubject.method("void", "boo" + suffix + "2", EMPTY), isPresent());
+    assertThat(clazzSubject.method("void", "boo" + suffix + "$1", EMPTY), isPresent());
 
     // There should be two getName's.
     assertThat(clazzSubject.method("java.lang.String", "getName", EMPTY), isPresent());
@@ -388,7 +388,6 @@ public class VerticalClassMergerTest extends TestBase {
     Set<String> preservedClassNames =
         ImmutableSet.of(
             "classmerging.NestedDefaultInterfaceMethodsTest",
-            "classmerging.NestedDefaultInterfaceMethodsTest$A",
             "classmerging.NestedDefaultInterfaceMethodsTest$C");
     runTest(
         testForR8(parameters.getBackend())
@@ -411,10 +410,14 @@ public class VerticalClassMergerTest extends TestBase {
           JAVA8_CF_DIR.resolve("NeverInline.class")
         };
     Set<String> preservedClassNames =
-        ImmutableSet.of(
-            "classmerging.NestedDefaultInterfaceMethodsTest",
-            "classmerging.NestedDefaultInterfaceMethodsTest$A",
-            "classmerging.NestedDefaultInterfaceMethodsTest$C");
+        parameters.isCfRuntime()
+            ? ImmutableSet.of(
+                "classmerging.NestedDefaultInterfaceMethodsTest",
+                "classmerging.NestedDefaultInterfaceMethodsTest$A",
+                "classmerging.NestedDefaultInterfaceMethodsTest$C")
+            : ImmutableSet.of(
+                "classmerging.NestedDefaultInterfaceMethodsTest",
+                "classmerging.NestedDefaultInterfaceMethodsTest$C");
     runTestOnInput(
         testForR8(parameters.getBackend())
             .addKeepRules(getProguardConfig(JAVA8_EXAMPLE_KEEP))
@@ -850,7 +853,6 @@ public class VerticalClassMergerTest extends TestBase {
         ImmutableSet.of(
             "classmerging.SuperCallToMergedClassIsRewrittenTest",
             "classmerging.A",
-            "classmerging.B",
             "classmerging.D",
             "classmerging.F");
 

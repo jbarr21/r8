@@ -197,6 +197,10 @@ public class Value implements Comparable<Value> {
     this.type = type;
   }
 
+  public static Value createNoDebugLocal(int number, TypeElement type) {
+    return new Value(number, type, null);
+  }
+
   public boolean isFixedRegisterValue() {
     return false;
   }
@@ -1076,6 +1080,10 @@ public class Value implements Comparable<Value> {
     // TODO(b/169120386): We should not check widening or narrowing when in D8 with valid type-info.
     return !appView.options().testing.enableNarrowAndWideningingChecksInD8
         && !appView.enableWholeProgramOptimizations();
+  }
+
+  public boolean hasBlock() {
+    return definition.hasBlock();
   }
 
   public BasicBlock getBlock() {

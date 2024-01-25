@@ -4,6 +4,8 @@
 package com.android.tools.r8.ir.code;
 
 import static com.android.tools.r8.ir.code.IRCode.INSTRUCTION_NUMBER_DELTA;
+import static com.android.tools.r8.utils.ConsumerUtils.emptyConsumer;
+import static com.google.common.base.Predicates.alwaysFalse;
 
 import com.android.tools.r8.errors.CompilationError;
 import com.android.tools.r8.errors.Unreachable;
@@ -22,6 +24,7 @@ import com.android.tools.r8.ir.analysis.type.TypeElement;
 import com.android.tools.r8.ir.code.Phi.RegisterReadType;
 import com.android.tools.r8.ir.conversion.DexBuilder;
 import com.android.tools.r8.ir.conversion.IRBuilder;
+import com.android.tools.r8.ir.optimize.AffectedValues;
 import com.android.tools.r8.utils.InternalOptions;
 import com.android.tools.r8.utils.IterableUtils;
 import com.android.tools.r8.utils.ListUtils;
@@ -399,26 +402,35 @@ public class BasicBlock {
     removeSuccessorsByIndex(new IntArrayList(new int[] {index}));
   }
 
-  public void removePredecessor(BasicBlock block, Set<Value> affectedValues) {
+  public void removePredecessor(BasicBlock block) {
+    removePredecessor(block, null);
+  }
+
+  public void removePredecessor(BasicBlock block, AffectedValues affectedValues) {
+    removePredecessor(block, affectedValues, emptyConsumer(), alwaysFalse());
+  }
+
+  public void removePredecessor(
+      BasicBlock block,
+      AffectedValues affectedValues,
+      Consumer<Value> prunedValueConsumer,
+      Predicate<BasicBlock> removedBlocks) {
     int index = predecessors.indexOf(block);
     assert index >= 0 : "removePredecessor did not find the predecessor to remove";
     getMutablePredecessors().remove(index);
-    if (phis != null) {
+    if (hasPhis()) {
       for (Phi phi : getPhis()) {
-        phi.removeOperand(index);
+        phi.removeOperand(index, affectedValues, removedBlocks);
       }
       // Collect and remove trivial phis after block removal.
       List<Phi> trivials = new ArrayList<>();
       for (Phi phi : getPhis()) {
         if (phi.isTrivialPhi()) {
           trivials.add(phi);
-          if (affectedValues != null) {
-            affectedValues.addAll(phi.affectedValues());
-          }
         }
       }
       for (Phi phi : trivials) {
-        phi.removeTrivialPhi(null, affectedValues);
+        phi.removeTrivialPhi(null, affectedValues, prunedValueConsumer, removedBlocks);
       }
     }
   }
@@ -426,11 +438,9 @@ public class BasicBlock {
   public void removeAllNormalSuccessors() {
     if (hasCatchHandlers()) {
       IntList successorsToRemove = new IntArrayList();
-      Set<Integer> handlers = catchHandlers.getUniqueTargets();
-      for (int i = 0; i < successors.size(); i++) {
-        if (!handlers.contains(i)) {
-          successorsToRemove.add(i);
-        }
+
+      for (int i = numberOfExceptionalSuccessors(), l = successors.size(); i < l; i++) {
+        successorsToRemove.add(i);
       }
       removeSuccessorsByIndex(successorsToRemove);
     } else {
@@ -674,7 +684,7 @@ public class BasicBlock {
   }
 
   public boolean hasPhis() {
-    return !phis.isEmpty();
+    return phis != null && !phis.isEmpty();
   }
 
   public List<Phi> getPhis() {
@@ -859,9 +869,18 @@ public class BasicBlock {
   }
 
   public void removePhi(Phi phi) {
+    removePhi(phi, null, emptyConsumer());
+  }
+
+  public void removePhi(
+      Phi phi, AffectedValues affectedValues, Consumer<Value> prunedValueConsumer) {
     phis.remove(phi);
     assert currentDefinitions == null || !currentDefinitions.containsValue(phi)
         : "Attempt to remove Phi " + phi + " which is present in currentDefinitions";
+    if (affectedValues != null) {
+      affectedValues.remove(phi);
+    }
+    prunedValueConsumer.accept(phi);
   }
 
   public void removePhis(Collection<Phi> phisToRemove) {
@@ -899,11 +918,11 @@ public class BasicBlock {
     successor.getMutablePredecessors().add(this);
   }
 
-  private static boolean blocksClean(List<BasicBlock> blocks) {
+  private static boolean blocksClean(Collection<BasicBlock> blocks) {
     blocks.forEach(
         b -> {
-          assert b.predecessors.size() == 0;
-          assert b.successors.size() == 0;
+          assert b.predecessors.isEmpty();
+          assert b.successors.isEmpty();
         });
     return true;
   }
@@ -1013,26 +1032,27 @@ public class BasicBlock {
     getMutableSuccessors().clear();
   }
 
-  public List<BasicBlock> unlink(
-      BasicBlock successor, DominatorTree dominator, Set<Value> affectedValues) {
+  public Set<BasicBlock> unlink(
+      BasicBlock successor, DominatorTree dominator, AffectedValues affectedValues) {
     assert affectedValues != null;
     assert successors.contains(successor);
     assert successor.predecessors.size() == 1; // There are no critical edges.
     assert successor.predecessors.get(0) == this;
-    List<BasicBlock> removedBlocks = new ArrayList<>();
-    for (BasicBlock dominated : dominator.dominatedBlocks(successor)) {
-      affectedValues.addAll(dominated.cleanForRemoval());
-      removedBlocks.add(dominated);
+    Set<BasicBlock> dominatedBlocks =
+        dominator.dominatedBlocks(successor, Sets.newIdentityHashSet());
+    for (BasicBlock dominatedBlock : dominatedBlocks) {
+      dominatedBlock.cleanForRemoval(affectedValues, emptyConsumer(), dominatedBlocks::contains);
     }
-    assert blocksClean(removedBlocks);
-    return removedBlocks;
+    assert blocksClean(dominatedBlocks);
+    return dominatedBlocks;
   }
 
-  public Set<Value> cleanForRemoval() {
-    Set<Value> affectedValues = Sets.newIdentityHashSet();
+  public void cleanForRemoval(
+      AffectedValues affectedValues,
+      Consumer<Value> prunedValueConsumer,
+      Predicate<BasicBlock> removedBlocks) {
     for (BasicBlock block : successors) {
-      affectedValues.addAll(block.getPhis());
-      block.removePredecessor(this, affectedValues);
+      block.removePredecessor(this, affectedValues, prunedValueConsumer, removedBlocks);
     }
     getMutableSuccessors().clear();
     for (BasicBlock block : predecessors) {
@@ -1040,26 +1060,30 @@ public class BasicBlock {
     }
     getMutablePredecessors().clear();
     for (Phi phi : getPhis()) {
-      affectedValues.addAll(phi.affectedValues());
+      affectedValues.addLiveAffectedValuesOf(phi, removedBlocks);
       for (Value operand : phi.getOperands()) {
         operand.removePhiUser(phi);
       }
+      affectedValues.remove(phi);
+      prunedValueConsumer.accept(phi);
     }
     getPhis().clear();
     for (Instruction instruction : getInstructions()) {
-      if (instruction.outValue() != null) {
-        affectedValues.addAll(instruction.outValue().affectedValues());
-        instruction.outValue().clearUsers();
+      if (instruction.hasOutValue()) {
+        Value outValue = instruction.outValue();
+        affectedValues.addLiveAffectedValuesOf(outValue, removedBlocks);
+        outValue.clearUsers();
         instruction.setOutValue(null);
+        affectedValues.remove(outValue);
+        prunedValueConsumer.accept(outValue);
       }
-      for (Value value : instruction.inValues) {
+      for (Value value : instruction.inValues()) {
         value.removeUser(instruction);
       }
       for (Value value : instruction.getDebugValues()) {
         value.removeDebugUser(instruction);
       }
     }
-    return affectedValues;
   }
 
   public void linkCatchSuccessors(List<DexType> guards, List<BasicBlock> targets) {
@@ -1164,30 +1188,44 @@ public class BasicBlock {
     return true;
   }
 
-  private boolean isExceptionTrampoline() {
-    boolean ret = instructions.size() == 2 && entry().isMoveException() && exit().isGoto();
-    assert !ret || !hasCatchHandlers() : "Trampoline should not have catch handlers";
-    return ret;
+  private BasicBlock getExceptionTrampolineTarget() {
+    if (instructions.size() == 2 && entry().isMoveException() && exit().isGoto()) {
+      assert !hasCatchHandlers() : "Trampoline should not have catch handlers";
+      return getUniqueNormalSuccessor();
+    }
+    return null;
   }
 
-  /** Returns whether the given blocks are in the same try block. */
+  /**
+   * Returns whether the given blocks are in the same try block.
+   *
+   * <p>They are considered the same if all catch handlers have the same guards and are trampolines
+   * that point to the same block.
+   */
   public boolean hasEquivalentCatchHandlers(BasicBlock other) {
     if (this == other) {
       return true;
     }
     List<Integer> targets1 = catchHandlers.getAllTargets();
     List<Integer> targets2 = other.catchHandlers.getAllTargets();
+
     int numHandlers = targets1.size();
     if (numHandlers != targets2.size()) {
       return false;
     }
-    // If all catch handlers are trampolines to the same block, then they are from the same try.
+    if (numHandlers == 0) {
+      return true;
+    }
+
+    List<DexType> guards1 = catchHandlers.getGuards();
+    List<DexType> guards2 = other.catchHandlers.getGuards();
     for (int i = 0; i < numHandlers; ++i) {
       BasicBlock catchBlock1 = successors.get(targets1.get(i));
       BasicBlock catchBlock2 = other.successors.get(targets2.get(i));
-      if (!catchBlock1.isExceptionTrampoline()
-          || !catchBlock2.isExceptionTrampoline()
-          || catchBlock1.getUniqueSuccessor() != catchBlock2.getUniqueSuccessor()) {
+      BasicBlock trampolineTarget = catchBlock1.getExceptionTrampolineTarget();
+      if (trampolineTarget == null
+          || trampolineTarget != catchBlock2.getExceptionTrampolineTarget()
+          || guards1.get(i).isNotIdenticalTo(guards2.get(i))) {
         return false;
       }
     }
@@ -1303,10 +1341,12 @@ public class BasicBlock {
   }
 
   public boolean hasCatchSuccessor(BasicBlock block) {
-    if (!hasCatchHandlers()) {
+    int numberOfExceptionalSuccessors = numberOfExceptionalSuccessors();
+    if (numberOfExceptionalSuccessors == 0) {
       return false;
     }
-    return catchHandlers.getUniqueTargets().contains(successors.indexOf(block));
+    int blockIndex = successors.indexOf(block);
+    return blockIndex >= 0 && blockIndex < numberOfExceptionalSuccessors;
   }
 
   public int guardsForCatchSuccessor(BasicBlock block) {
